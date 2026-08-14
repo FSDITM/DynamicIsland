@@ -233,4 +233,98 @@ internal static class Win32
     /// </summary>
     [DllImport("dcomp.dll", ExactSpelling = true)]
     public static extern int DCompositionCreateDevice2(nint renderingDevice, in Guid iid, out nint compositionDevice);
+
+    // --- Иконка в трее ---
+    public const uint NIM_ADD = 0x00000000;
+    public const uint NIM_MODIFY = 0x00000001;
+    public const uint NIM_DELETE = 0x00000002;
+    public const uint NIF_MESSAGE = 0x00000001;
+    public const uint NIF_ICON = 0x00000002;
+    public const uint NIF_TIP = 0x00000004;
+    public const uint WM_TRAYICON = 0x8000 + 2;
+
+    // --- Всплывающее меню ---
+    public const uint MF_STRING = 0x00000000;
+    public const uint MF_SEPARATOR = 0x00000800;
+    public const uint MF_CHECKED = 0x00000008;
+    public const uint TPM_RIGHTBUTTON = 0x0002;
+    public const uint TPM_RETURNCMD = 0x0100;
+
+    public const int IDI_APPLICATION = 32512;
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    public struct NOTIFYICONDATAW
+    {
+        public uint cbSize;
+        public nint hWnd;
+        public uint uID;
+        public uint uFlags;
+        public uint uCallbackMessage;
+        public nint hIcon;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string szTip;
+        public uint dwState;
+        public uint dwStateMask;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 256)] public string szInfo;
+        public uint uVersion;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 64)] public string szInfoTitle;
+        public uint dwInfoFlags;
+        public Guid guidItem;
+        public nint hBalloonIcon;
+    }
+
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+    public static extern bool Shell_NotifyIconW(uint dwMessage, ref NOTIFYICONDATAW lpData);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern nint LoadIconW(nint hInstance, nint lpIconName);
+
+    [DllImport("user32.dll")]
+    public static extern nint CreatePopupMenu();
+
+    [DllImport("user32.dll")]
+    public static extern bool DestroyMenu(nint hMenu);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern bool AppendMenuW(nint hMenu, uint uFlags, nuint uIDNewItem,
+        [MarshalAs(UnmanagedType.LPWStr)] string? lpNewItem);
+
+    [DllImport("user32.dll")]
+    public static extern int TrackPopupMenu(nint hMenu, uint uFlags, int x, int y, int nReserved, nint hWnd, nint prcRect);
+
+    [DllImport("user32.dll")]
+    public static extern bool SetForegroundWindow(nint hWnd);
+
+    // --- Слежение за активным окном ---
+    public const uint EVENT_SYSTEM_FOREGROUND = 0x0003;
+    public const uint EVENT_SYSTEM_MINIMIZEEND = 0x0017;
+    public const uint EVENT_OBJECT_LOCATIONCHANGE = 0x800B;
+    public const uint WINEVENT_OUTOFCONTEXT = 0x0000;
+    public const uint WINEVENT_SKIPOWNPROCESS = 0x0002;
+
+    public delegate void WinEventProc(nint hWinEventHook, uint eventType, nint hwnd,
+        int idObject, int idChild, uint dwEventThread, uint dwmsEventTime);
+
+    [DllImport("user32.dll")]
+    public static extern nint SetWinEventHook(uint eventMin, uint eventMax, nint hmodWinEventProc,
+        WinEventProc lpfnWinEventProc, uint idProcess, uint idThread, uint dwFlags);
+
+    [DllImport("user32.dll")]
+    public static extern bool UnhookWinEvent(nint hWinEventHook);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern int GetClassNameW(nint hWnd, [Out] char[] lpClassName, int nMaxCount);
+
+    [DllImport("user32.dll")]
+    public static extern bool IsIconic(nint hWnd);
+
+    [DllImport("user32.dll")]
+    public static extern bool IsZoomed(nint hWnd);
+
+    [DllImport("shell32.dll")]
+    public static extern int SHQueryUserNotificationState(out int state);
+
+    // QUNS_*: 2 = полноэкранное D3D-приложение, 3 = презентация, 4 = «не беспокоить»
+    public const int QUNS_BUSY = 1;
+    public const int QUNS_RUNNING_D3D_FULL_SCREEN = 2;
+    public const int QUNS_PRESENTATION_MODE = 3;
 }

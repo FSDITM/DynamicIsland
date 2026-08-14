@@ -77,6 +77,9 @@ public sealed class GpuCompositionHost : IDisposable
 
     public string AdapterName { get; private set; } = "unknown";
 
+    /// <summary>Состояние слоя валидации D3D12 — чтобы не принимать его молчание за успех.</summary>
+    public string DebugLayerStatus { get; private set; } = "не запрашивался (сборка Release)";
+
     public void Initialize(nint hwnd, int width, int height)
     {
         Width = Math.Max(1, width);
@@ -85,10 +88,19 @@ public sealed class GpuCompositionHost : IDisposable
 #if DEBUG
         // Слой валидации ловит рассинхрон состояний ресурсов — а мы как раз делим
         // управление состоянием back buffer'а со Skia, так что это не роскошь.
-        if (D3D12.D3D12GetDebugInterface(out ID3D12Debug? debug).Success && debug is not null)
+        // Требует компонента Windows «Средства графики» (Graphics Tools);
+        // без него D3D12GetDebugInterface не отдаёт интерфейс.
+        var debugResult = D3D12.D3D12GetDebugInterface(out ID3D12Debug? debug);
+        if (debugResult.Success && debug is not null)
         {
             debug.EnableDebugLayer();
             debug.Dispose();
+            DebugLayerStatus = "включён";
+        }
+        else
+        {
+            DebugLayerStatus = $"недоступен (HRESULT 0x{debugResult.Code:X8}) — " +
+                               "поставьте компонент Windows «Средства графики»";
         }
 #endif
 
@@ -232,6 +244,24 @@ public sealed class GpuCompositionHost : IDisposable
 
     /// <summary>Включён ли слой валидации D3D12 (только в отладочной сборке).</summary>
     public bool ValidationEnabled => _infoQueue is not null;
+
+    /// <summary>
+    /// Причина удаления устройства. Грубые ошибки с барьерами состояний обычно
+    /// заканчиваются сбросом устройства, поэтому проверка работает и без
+    /// слоя валидации — правда, ловит только тяжёлые случаи.
+    /// </summary>
+    public string DeviceHealth
+    {
+        get
+        {
+            try
+            {
+                var reason = _device.DeviceRemovedReason;
+                return reason.Success ? "устройство в норме" : $"устройство сброшено: 0x{reason.Code:X8}";
+            }
+            catch (Exception ex) { return "не удалось опросить: " + ex.Message; }
+        }
+    }
 
     /// <summary>Выгребает сообщения слоя валидации D3D12. Пусто — значит состояния сходятся.</summary>
     public IReadOnlyList<string> DrainValidationMessages()

@@ -41,6 +41,15 @@ internal sealed class OverlayWindow : IDisposable
     public event Action? DisplayChanged;
     public event Action<uint>? DpiChanged;
 
+    /// <summary>Клик по иконке в трее; аргумент — код сообщения мыши.</summary>
+    public event Action<uint>? TrayMessage;
+
+    /// <summary>Фоновый поток попросил перерисовать кадр.</summary>
+    public event Action? Woken;
+
+    /// <summary>Будит цикл отрисовки из любого потока.</summary>
+    public void Wake() => Win32.PostMessageW(Handle, Win32.WM_APP_WAKE, 0, 0);
+
     /// <summary>
     /// Возвращает true, если точка (клиентские координаты) попадает в интерактивную
     /// область. Всё остальное отдаётся окнам под нами — курсор и клики проходят
@@ -153,6 +162,14 @@ internal sealed class OverlayWindow : IDisposable
 
             case Win32.WM_MOUSEWHEEL:
                 MouseWheel?.Invoke((short)((wParam >> 16) & 0xFFFF));
+                return 0;
+
+            case Win32.WM_APP_WAKE:
+                Woken?.Invoke();
+                return 0;
+
+            case Win32.WM_TRAYICON:
+                TrayMessage?.Invoke((uint)(lParam & 0xFFFF));
                 return 0;
 
             case Win32.WM_DPICHANGED:

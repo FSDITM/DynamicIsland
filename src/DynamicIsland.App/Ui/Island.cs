@@ -2,72 +2,95 @@ using SkiaSharp;
 
 namespace DynamicIsland.Ui;
 
-/// <summary>
-/// Островок: форма, пружинная анимация размера и отрисовка.
-///
-/// Все SKPaint / SKImageFilter создаются один раз и переиспользуются. В оригинале
-/// они создавались на каждый кадр для каждого объекта и не освобождались — это давало
-/// поток нативных аллокаций и работу финализатору, то есть микрофризы.
-/// </summary>
-public sealed class Island : IDisposable
+internal enum IslandMode
 {
-    // Логические размеры (независимые от DPI).
-    public Vec2 RestSize { get; set; } = new(260, 42);
-    public Vec2 HoverSize { get; set; } = new(330, 68);
-    public Vec2 NotchSize { get; set; } = new(180, 8);
+    /// <summary>Полный экран под нами — уходим с глаз.</summary>
+    Hidden,
+
+    /// <summary>Под островком развёрнутое окно — тонкая полоска у края.</summary>
+    Notch,
+
+    /// <summary>Обычное состояние: часы и заряд.</summary>
+    Rest,
+
+    /// <summary>Курсор на островке — раскрыт с плеером.</summary>
+    Expanded,
+}
+
+internal enum IslandButton { None, PlayPause, Next, Previous }
+
+/// <summary>
+/// Геометрия островка и пружинная анимация перехода между состояниями.
+/// Отрисовкой содержимого занимается <see cref="IslandContent"/>.
+/// </summary>
+internal sealed class Island
+{
+    public Vec2 NotchSize { get; set; } = new(190, 7);
+    public Vec2 RestSize { get; set; } = new(250, 38);
+    public Vec2 ExpandedSize { get; set; } = new(430, 132);
 
     public float TopOffset { get; set; } = 8f;
 
     private readonly SecondOrder _sizeSpring;
     private readonly SecondOrder _offsetSpring;
+    private readonly SecondOrder _fadeSpring;
 
-    private readonly SKPaint _fillPaint;
-    private readonly SKPaint _borderPaint;
-    private readonly SKPaint _shadowPaint;
-
-    // Фильтр тени — самый дорогой объект в кадре. Пересобираем только когда
-    // радиус реально изменился на заметную величину, а не каждый кадр.
-    private SKImageFilter? _shadowFilter;
-    private float _shadowFilterRadius = -1f;
-
-    public bool IsHovered { get; set; }
-
-    /// <summary>Свёрнут в тонкую полоску, потому что под ним развёрнутое окно.</summary>
-    public bool Collapsed { get; set; }
+    public IslandMode Mode { get; private set; } = IslandMode.Rest;
 
     public Vec2 CurrentSize { get; private set; }
     public float CurrentTop { get; private set; }
 
-    /// <summary>Пока false — планировщик кадров может уснуть.</summary>
-    public bool IsAnimating => !_sizeSpring.IsSettled || !_offsetSpring.IsSettled;
+    /// <summary>0 — свёрнут, 1 — полностью раскрыт. Управляет проявлением содержимого.</summary>
+    public float ExpandProgress { get; private set; }
+
+    /// <summary>0 — скрыт полностью, 1 — виден.</summary>
+    public float Visibility { get; private set; } = 1f;
+
+    public bool IsAnimating => !_sizeSpring.IsSettled || !_offsetSpring.IsSettled || !_fadeSpring.IsSettled;
 
     public Island()
     {
         _sizeSpring = new SecondOrder(RestSize, 2.5f, 0.6f, 0.1f);
         _offsetSpring = new SecondOrder(new Vec2(TopOffset, 0), 3f, 0.9f, 0.1f);
+        _fadeSpring = new SecondOrder(new Vec2(0, 1), 4f, 1f, 0f);
         CurrentSize = RestSize;
         CurrentTop = TopOffset;
-
-        _fillPaint = new SKPaint { Style = SKPaintStyle.Fill, IsAntialias = true, Color = new SKColor(12, 12, 14, 255) };
-        _borderPaint = new SKPaint { Style = SKPaintStyle.Stroke, IsAntialias = true, StrokeWidth = 1.25f, Color = new SKColor(255, 255, 255, 26) };
-        _shadowPaint = new SKPaint { Style = SKPaintStyle.Fill, IsAntialias = true, Color = new SKColor(0, 0, 0, 255) };
     }
 
-    private Vec2 TargetSize => Collapsed && !IsHovered ? NotchSize
-                             : IsHovered ? HoverSize
-                             : RestSize;
+    public void SetMode(IslandMode mode) => Mode = mode;
+
+    private Vec2 TargetSize => Mode switch
+    {
+        IslandMode.Expanded => ExpandedSize,
+        IslandMode.Notch => NotchSize,
+        IslandMode.Hidden => NotchSize,
+        _ => RestSize,
+    };
 
     public void Update(float dt)
     {
-        // Разворачивание и сворачивание ощущаются по-разному: наружу — мягче и с
-        // лёгким перелётом, внутрь — собраннее. Ровно как в оригинале.
-        if (IsHovered) _sizeSpring.SetValues(2.5f, 0.6f, 0.1f);
+        // Наружу — мягче и с лёгким перелётом, внутрь — собраннее.
+        if (Mode == IslandMode.Expanded) _sizeSpring.SetValues(2.5f, 0.6f, 0.1f);
         else _sizeSpring.SetValues(3f, 0.9f, 0.1f);
 
         CurrentSize = _sizeSpring.Update(dt, TargetSize);
 
-        var targetTop = Collapsed && !IsHovered ? 0f : TopOffset;
+        var targetTop = Mode switch
+        {
+            IslandMode.Hidden => -NotchSize.Y * 3f,
+            IslandMode.Notch => 0f,
+            _ => TopOffset,
+        };
         CurrentTop = _offsetSpring.Update(dt, new Vec2(targetTop, 0)).X;
+
+        // X — проявление содержимого, Y — общая видимость.
+        var targets = new Vec2(
+            Mode == IslandMode.Expanded ? 1f : 0f,
+            Mode == IslandMode.Hidden ? 0f : 1f);
+        var fade = _fadeSpring.Update(dt, targets);
+
+        ExpandProgress = Math.Clamp(fade.X, 0f, 1f);
+        Visibility = Math.Clamp(fade.Y, 0f, 1f);
     }
 
     /// <summary>Прямоугольник островка в физических пикселях внутри сцены.</summary>
@@ -80,43 +103,6 @@ public sealed class Island : IDisposable
         return new SKRect(x, y, x + w, y + h);
     }
 
-    public void Draw(SKCanvas canvas, float stageWidth, float scale)
-    {
-        var rect = GetRect(stageWidth, scale);
-        var radius = MathF.Min(rect.Height / 2f, 30f * scale);
-        var round = new SKRoundRect(rect, radius);
-
-        // Тень: сильнее и шире, когда островок раскрыт.
-        var shadowRadius = (IsHovered ? 26f : 9f) * scale;
-        var shadowAlpha = (byte)(IsHovered ? 150 : 90);
-        EnsureShadowFilter(shadowRadius);
-
-        _shadowPaint.Color = new SKColor(0, 0, 0, shadowAlpha);
-        _shadowPaint.ImageFilter = _shadowFilter;
-        canvas.DrawRoundRect(round, _shadowPaint);
-
-        canvas.DrawRoundRect(round, _fillPaint);
-        canvas.DrawRoundRect(round, _borderPaint);
-
-        round.Dispose();
-    }
-
-    private void EnsureShadowFilter(float radius)
-    {
-        // Квантуем радиус: перестраивать нативный фильтр ради 0.1 px бессмысленно.
-        var quantized = MathF.Round(radius * 2f) / 2f;
-        if (_shadowFilter is not null && MathF.Abs(quantized - _shadowFilterRadius) < 0.01f) return;
-
-        _shadowFilter?.Dispose();
-        _shadowFilter = SKImageFilter.CreateBlur(quantized, quantized);
-        _shadowFilterRadius = quantized;
-    }
-
-    public void Dispose()
-    {
-        _fillPaint.Dispose();
-        _borderPaint.Dispose();
-        _shadowPaint.Dispose();
-        _shadowFilter?.Dispose();
-    }
+    public float GetRadius(SKRect rect, float scale) =>
+        MathF.Min(rect.Height / 2f, 30f * scale);
 }

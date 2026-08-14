@@ -12,7 +12,7 @@ namespace DynamicIsland.Ui;
 ///  • есть <see cref="IsSettled"/>: планировщик кадров по нему понимает, что
 ///    анимация закончилась и можно уходить в простой с нулевым CPU.
 /// </summary>
-public sealed class SecondOrder
+internal sealed class SecondOrder
 {
     private Vec2 _xp;
     private Vec2 _y;

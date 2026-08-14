@@ -7,7 +7,7 @@ namespace DynamicIsland.Ui;
 /// а позиция считается по несколько раз на объект за кадр. Здесь readonly struct:
 /// ноль аллокаций, ноль работы для GC.
 /// </summary>
-public readonly record struct Vec2(float X, float Y)
+internal readonly record struct Vec2(float X, float Y)
 {
     public static readonly Vec2 Zero = new(0, 0);
     public static readonly Vec2 One = new(1, 1);
