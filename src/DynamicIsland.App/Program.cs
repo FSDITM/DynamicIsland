@@ -26,6 +26,15 @@ internal static class Program
             return 0;
         }
 
+        // --snapshot <папка>: отрисовать состояния островка в PNG тем же кодом,
+        // что рисует на экране. Позволяет проверять вёрстку без снимков экрана.
+        var snapIdx = Array.IndexOf(args, "--snapshot");
+        if (snapIdx >= 0 && snapIdx + 1 < args.Length)
+        {
+            Ui.SnapshotRenderer.RenderAll(args[snapIdx + 1]);
+            return 0;
+        }
+
         var selfTest = 0.0;
         var idx = Array.IndexOf(args, "--selftest");
         if (idx >= 0 && idx + 1 < args.Length) double.TryParse(args[idx + 1], out selfTest);
@@ -92,6 +101,13 @@ internal sealed class IslandApp : IDisposable
 
     private ForegroundWatcher.Occlusion _occlusion = ForegroundWatcher.Occlusion.Clear;
 
+    // Показ нового трека: островок сам раскрывается на пару секунд, когда
+    // сменилась песня, и сворачивается обратно.
+    private static readonly TimeSpan PeekDuration = TimeSpan.FromSeconds(3.5);
+    private string _lastTrackKey = "";
+    private long _peekUntilTicks;
+    private Timer? _peekTimer;
+
     // Метрики
     private double _cpuFrameMs;
     private double _fps;
@@ -142,7 +158,7 @@ internal sealed class IslandApp : IDisposable
 
         // Сервисы будят цикл отрисовки сообщением — сами ничего не рисуют.
         _power.Changed += _window.Wake;
-        _media.Changed += _window.Wake;
+        _media.Changed += OnMediaChanged;
         _power.Start();
         _ = _media.StartAsync();
 
@@ -230,7 +246,41 @@ internal sealed class IslandApp : IDisposable
         _clockTimer = new Timer(_ => { _window.Wake(); Schedule(); }, null,
             Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
         Schedule();
+
+        // Одноразовый будильник на момент, когда показ нового трека истечёт.
+        _peekTimer = new Timer(_ => _window.Wake(), null,
+            Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
     }
+
+    /// <summary>
+    /// Сменился трек — показываем его на несколько секунд и убираемся обратно.
+    /// Приходит из потока WinRT, поэтому только выставляем срок и будим цикл.
+    /// </summary>
+    private void OnMediaChanged()
+    {
+        var snapshot = _media.Snapshot;
+        var key = snapshot.HasSession ? $"{snapshot.AppId}|{snapshot.Title}|{snapshot.Artist}" : "";
+
+        if (key != _lastTrackKey)
+        {
+            var wasFirst = _lastTrackKey.Length == 0;
+            _lastTrackKey = key;
+
+            // На старте не раскрываемся: приложение только что запустилось,
+            // это не «сменился трек».
+            if (!wasFirst && key.Length > 0)
+            {
+                Volatile.Write(ref _peekUntilTicks, (DateTime.UtcNow + PeekDuration).Ticks);
+                // Разбудить в момент истечения показа, иначе островок останется
+                // раскрытым до следующего движения мыши.
+                _peekTimer?.Change(PeekDuration + TimeSpan.FromMilliseconds(50), Timeout.InfiniteTimeSpan);
+            }
+        }
+
+        _window.Wake();
+    }
+
+    private bool IsPeeking => DateTime.UtcNow.Ticks < Volatile.Read(ref _peekUntilTicks);
 
     private IslandMode ResolveMode()
     {
@@ -238,8 +288,9 @@ internal sealed class IslandApp : IDisposable
         // результат зависит от того, что было развёрнуто на экране в момент запуска.
         if (_selfTestSeconds > 0) return _hovered ? IslandMode.Expanded : IslandMode.Rest;
 
+        // В полноэкранном режиме молчим даже про новый трек — там играют или смотрят.
         if (_occlusion == ForegroundWatcher.Occlusion.Fullscreen) return IslandMode.Hidden;
-        if (_hovered) return IslandMode.Expanded;
+        if (_hovered || IsPeeking) return IslandMode.Expanded;
         if (_occlusion == ForegroundWatcher.Occlusion.Covered) return IslandMode.Notch;
         return IslandMode.Rest;
     }
@@ -470,6 +521,10 @@ internal sealed class IslandApp : IDisposable
 
     private void DrawFrame(SKCanvas canvas)
     {
+        // Прямоугольники кнопок известны с прошлого кадра — задержка в один кадр
+        // при наведении незаметна, зато не нужно считать раскладку дважды.
+        _content.HoveredButton = _content.HitButton(_window.CursorClient.X, _window.CursorClient.Y);
+
         _content.Draw(canvas, _island, _gpu.Width, _window.Scale,
             _media.Snapshot, _artwork, _power.Snapshot);
 
@@ -499,6 +554,7 @@ internal sealed class IslandApp : IDisposable
     public void Dispose()
     {
         _clockTimer?.Dispose();
+        _peekTimer?.Dispose();
         _tray.Dispose();
         _watcher.Dispose();
         _power.Dispose();

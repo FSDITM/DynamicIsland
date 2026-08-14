@@ -27,7 +27,9 @@ internal sealed class Island
 {
     public Vec2 NotchSize { get; set; } = new(190, 7);
     public Vec2 RestSize { get; set; } = new(250, 38);
-    public Vec2 ExpandedSize { get; set; } = new(430, 132);
+    // Высота подобрана так, чтобы нижний край обложки и кнопок совпадал с
+    // отступом: при 132 снизу оставалась заметная пустая полоса.
+    public Vec2 ExpandedSize { get; set; } = new(450, 116);
 
     public float TopOffset { get; set; } = 8f;
 

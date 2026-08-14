@@ -37,11 +37,16 @@ internal sealed class IslandContent : IDisposable
     private readonly SKPath _iconPause = BuildPauseIcon();
     private readonly SKPath _iconNext = BuildNextIcon();
     private readonly SKPath _iconPrevious = BuildPreviousIcon();
+    private readonly SKPath _iconNote = BuildNoteIcon();
+    private readonly SKPath _iconBolt = BuildBoltIcon();
 
     // Прямоугольники кнопок в физических пикселях — заполняются при отрисовке
     // и используются для попадания мышью.
     private SKRect _btnPrev, _btnPlay, _btnNext;
     private bool _controlsVisible;
+
+    /// <summary>Кнопка под курсором — подсвечивается кружком. Ставит вызывающий.</summary>
+    public IslandButton HoveredButton { get; set; } = IslandButton.None;
 
     public IslandContent()
     {
@@ -131,9 +136,7 @@ internal sealed class IslandContent : IDisposable
         }
         else if (power.HasBattery)
         {
-            _text.Color = (power.IsCharging ? Accent : TextMuted).WithAlpha((byte)(alpha * 255));
-            var label = power.IsCharging ? $"{power.Percent}% ⚡" : $"{power.Percent}%";
-            canvas.DrawText(label, rect.Right - pad, midY, SKTextAlign.Right, _fontSmall, _text);
+            DrawBatteryLabel(canvas, rect.Right - pad, midY, scale, power, (byte)(alpha * 255));
         }
         else
         {
@@ -150,53 +153,51 @@ internal sealed class IslandContent : IDisposable
     {
         if (alpha <= 0.01f) return;
 
-        var pad = 18f * scale;
+        var pad = 16f * scale;
         var a = (byte)(alpha * 255);
 
-        // Верхняя строка: часы слева, заряд справа.
-        _fontSmall.Size = 12f * scale;
+        // Верхняя строка: часы и дата слева, заряд справа.
+        _fontSmall.Size = 11.5f * scale;
         _text.Color = TextMuted.WithAlpha(a);
         canvas.DrawText(DateTime.Now.ToString("HH:mm  ddd, d MMM"), rect.Left + pad,
-            rect.Top + pad + 10f * scale, SKTextAlign.Left, _fontSmall, _text);
+            rect.Top + 22f * scale, SKTextAlign.Left, _fontSmall, _text);
 
-        if (power.HasBattery)
-        {
-            _text.Color = (power.IsCharging ? Accent : TextMuted).WithAlpha(a);
-            canvas.DrawText(power.IsCharging ? $"{power.Percent}% ⚡" : $"{power.Percent}%",
-                rect.Right - pad, rect.Top + pad + 10f * scale, SKTextAlign.Right, _fontSmall, _text);
-        }
+        DrawBatteryLabel(canvas, rect.Right - pad, rect.Top + 22f * scale, scale, power, a);
 
-        var artSize = 62f * scale;
-        var artTop = rect.Top + pad + 22f * scale;
+        // Обложка слева, кнопки справа, текст между ними. Нижние края обложки и
+        // кнопок совпадают — это задаёт нижнюю границу содержимого.
+        var artSize = 64f * scale;
+        var artTop = rect.Top + 34f * scale;
         var artRect = new SKRect(rect.Left + pad, artTop, rect.Left + pad + artSize, artTop + artSize);
 
         DrawArtwork(canvas, artRect, scale, artwork, alpha);
 
+        var controlsWidth = 26f * 3f * scale + 12f * 2f * scale;
+        var controlsLeft = rect.Right - pad - controlsWidth;
+        DrawControls(canvas, controlsLeft, artRect.MidY, scale, media, alpha);
+
         var textLeft = artRect.Right + 14f * scale;
-        var textRight = rect.Right - pad;
-        var available = textRight - textLeft;
+        var available = controlsLeft - 16f * scale - textLeft;
 
         if (media.HasSession)
         {
             _fontTitle.Size = 14f * scale;
             _text.Color = TextPrimary.WithAlpha(a);
             canvas.DrawText(Truncate(media.Title, _fontTitle, available), textLeft,
-                artTop + 16f * scale, SKTextAlign.Left, _fontTitle, _text);
+                artTop + 24f * scale, SKTextAlign.Left, _fontTitle, _text);
 
             _fontSmall.Size = 12f * scale;
             _text.Color = TextMuted.WithAlpha(a);
             canvas.DrawText(Truncate(media.Artist, _fontSmall, available), textLeft,
-                artTop + 34f * scale, SKTextAlign.Left, _fontSmall, _text);
+                artTop + 44f * scale, SKTextAlign.Left, _fontSmall, _text);
         }
         else
         {
             _fontSmall.Size = 12f * scale;
             _text.Color = TextMuted.WithAlpha(a);
-            canvas.DrawText("Ничего не воспроизводится", textLeft, artTop + 24f * scale,
+            canvas.DrawText("Ничего не воспроизводится", textLeft, artTop + 36f * scale,
                 SKTextAlign.Left, _fontSmall, _text);
         }
-
-        DrawControls(canvas, textLeft, artRect.Bottom - 10f * scale, scale, media, alpha);
     }
 
     private void DrawArtwork(SKCanvas canvas, SKRect rect, float scale, SKImage? artwork, float alpha)
@@ -217,10 +218,10 @@ internal sealed class IslandContent : IDisposable
             _fill.Color = new SKColor(38, 38, 44, (byte)(alpha * 255));
             canvas.DrawRoundRect(round, _fill);
 
-            // Заглушка — нота по центру.
-            _fontTitle.Size = 22f * scale;
-            _text.Color = TextMuted.WithAlpha((byte)(alpha * 180));
-            canvas.DrawText("♪", rect.MidX, rect.MidY + 8f * scale, SKTextAlign.Center, _fontTitle, _text);
+            // Ноту рисуем вектором, а не символом ♪: в Segoe UI такого глифа нет,
+            // и вместо него получался пустой квадрат.
+            _fill.Color = TextMuted.WithAlpha((byte)(alpha * 170));
+            DrawIcon(canvas, _iconNote, rect);
         }
     }
 
@@ -235,6 +236,25 @@ internal sealed class IslandContent : IDisposable
         _btnNext = SKRect.Create(_btnPlay.Right + gap, centerY - size / 2f, size, size);
 
         var a = (byte)(alpha * (media.HasSession ? 255 : 90));
+
+        // Подсветка кнопки под курсором: кружок за иконкой.
+        if (media.HasSession && HoveredButton != IslandButton.None)
+        {
+            var target = HoveredButton switch
+            {
+                IslandButton.Previous => _btnPrev,
+                IslandButton.PlayPause => _btnPlay,
+                IslandButton.Next => _btnNext,
+                _ => SKRect.Empty,
+            };
+
+            if (!target.IsEmpty)
+            {
+                _fill.Color = new SKColor(255, 255, 255, (byte)(alpha * 30));
+                canvas.DrawCircle(target.MidX, target.MidY, size * 0.72f, _fill);
+            }
+        }
+
         _fill.Color = TextPrimary.WithAlpha(a);
 
         DrawIcon(canvas, _iconPrevious, _btnPrev);
@@ -281,6 +301,59 @@ internal sealed class IslandContent : IDisposable
         b.LineTo(0.22f, 0.81f);
         b.Close();
         b.AddRect(new SKRect(0.68f, 0.19f, 0.78f, 0.81f));
+        return b.Detach();
+    }
+
+    /// <summary>Молния зарядки — тоже вектором, символ ⚡ есть не во всех шрифтах.</summary>
+    private static SKPath BuildBoltIcon()
+    {
+        var b = new SKPathBuilder();
+        b.MoveTo(0.58f, 0.04f);
+        b.LineTo(0.20f, 0.56f);
+        b.LineTo(0.44f, 0.56f);
+        b.LineTo(0.38f, 0.96f);
+        b.LineTo(0.78f, 0.42f);
+        b.LineTo(0.52f, 0.42f);
+        b.Close();
+        return b.Detach();
+    }
+
+    /// <summary>
+    /// Заряд, выровненный по правому краю: при зарядке слева от процентов
+    /// добавляется молния, и цвет меняется на акцентный.
+    /// </summary>
+    private void DrawBatteryLabel(SKCanvas canvas, float rightX, float baselineY,
+                                  float scale, PowerSnapshot power, byte alpha)
+    {
+        if (!power.HasBattery) return;
+
+        var label = $"{power.Percent}%";
+        var color = power.IsCharging ? Accent : TextMuted;
+
+        _text.Color = color.WithAlpha(alpha);
+        canvas.DrawText(label, rightX, baselineY, SKTextAlign.Right, _fontSmall, _text);
+
+        if (!power.IsCharging) return;
+
+        var boltSize = _fontSmall.Size * 0.85f;
+        var textWidth = _fontSmall.MeasureText(label);
+        var boltLeft = rightX - textWidth - 3f * scale - boltSize;
+
+        _fill.Color = color.WithAlpha(alpha);
+        DrawIcon(canvas, _iconBolt, SKRect.Create(boltLeft, baselineY - boltSize * 0.85f, boltSize, boltSize));
+    }
+
+    /// <summary>Восьмая нота в единичных координатах — заглушка для обложки.</summary>
+    private static SKPath BuildNoteIcon()
+    {
+        var b = new SKPathBuilder();
+        b.AddOval(new SKRect(0.34f, 0.60f, 0.52f, 0.74f));   // головка
+        b.AddRect(new SKRect(0.49f, 0.28f, 0.53f, 0.68f));   // штиль
+        b.MoveTo(0.53f, 0.28f);                              // флажок
+        b.LineTo(0.68f, 0.34f);
+        b.LineTo(0.68f, 0.44f);
+        b.LineTo(0.53f, 0.38f);
+        b.Close();
         return b.Detach();
     }
 
@@ -357,5 +430,7 @@ internal sealed class IslandContent : IDisposable
         _iconPause.Dispose();
         _iconNext.Dispose();
         _iconPrevious.Dispose();
+        _iconNote.Dispose();
+        _iconBolt.Dispose();
     }
 }

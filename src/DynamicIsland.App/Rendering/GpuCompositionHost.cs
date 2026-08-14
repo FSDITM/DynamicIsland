@@ -112,9 +112,9 @@ public sealed class GpuCompositionHost : IDisposable
         _queue = _device.CreateCommandQueue(CommandListType.Direct, CommandQueuePriority.Normal,
                                             CommandQueueFlags.None, 0);
 
-#if DEBUG
+        // Интерфейс существует только когда слой валидации реально поднялся;
+        // в Release он всегда null, и это нормально.
         _infoQueue = _device.QueryInterfaceOrNull<ID3D12InfoQueue>();
-#endif
 
         _fence = _device.CreateFence(0, FenceFlags.None);
 
