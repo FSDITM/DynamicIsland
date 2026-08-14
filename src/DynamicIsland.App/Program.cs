@@ -262,11 +262,18 @@ internal sealed class IslandApp : IDisposable
                       $"flush={_gpu.LastFlushMs:0.000} " +
                       $"present={_gpu.LastPresentMs:0.000}");
 
-            var messages = _gpu.DrainValidationMessages();
-            if (messages.Count == 0)
-                Log.Write("ВАЛИДАЦИЯ D3D12: сообщений нет — состояния ресурсов сходятся");
+            if (!_gpu.ValidationEnabled)
+            {
+                Log.Write("ВАЛИДАЦИЯ D3D12: слой отключён (сборка Release) — проверять состояния надо в Debug");
+            }
             else
-                foreach (var m in messages.Take(25)) Log.Write("ВАЛИДАЦИЯ " + m);
+            {
+                var messages = _gpu.DrainValidationMessages();
+                if (messages.Count == 0)
+                    Log.Write("ВАЛИДАЦИЯ D3D12: сообщений нет — состояния ресурсов сходятся");
+                else
+                    foreach (var m in messages.Take(25)) Log.Write("ВАЛИДАЦИЯ " + m);
+            }
         }
     }
 

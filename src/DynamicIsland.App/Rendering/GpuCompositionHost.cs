@@ -230,6 +230,9 @@ public sealed class GpuCompositionHost : IDisposable
         _queue.ExecuteCommandList(_commandList);
     }
 
+    /// <summary>Включён ли слой валидации D3D12 (только в отладочной сборке).</summary>
+    public bool ValidationEnabled => _infoQueue is not null;
+
     /// <summary>Выгребает сообщения слоя валидации D3D12. Пусто — значит состояния сходятся.</summary>
     public IReadOnlyList<string> DrainValidationMessages()
     {
