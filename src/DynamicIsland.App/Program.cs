@@ -113,6 +113,14 @@ internal sealed class IslandApp : IDisposable
     private double _fps;
     private long _framesRendered;
     private readonly Stopwatch _fpsWindow = Stopwatch.StartNew();
+    private readonly Stopwatch _uptime = Stopwatch.StartNew();
+
+    /// <summary>
+    /// Пока играет музыка, эквалайзер в компактном виде должен шевелиться.
+    /// Держим для него ~18 кадров в секунду вместо 60: движение читается,
+    /// а расход остаётся в районе процента ядра.
+    /// </summary>
+    private const uint MusicFrameIntervalMs = 55;
     private int _fpsCounter;
 
     private readonly SKPaint _hudPaint = new() { Color = new SKColor(150, 255, 165, 235), IsAntialias = true };
@@ -137,9 +145,11 @@ internal sealed class IslandApp : IDisposable
 
     public void Run()
     {
-        var (x, y, w, h) = ComputeStageBounds();
+        // Окно создаём заглушкой у верхнего края нужного монитора: узнать его DPI
+        // можно только по готовому окну, а от DPI зависит размер сцены.
+        var (x, y) = MonitorTopCenter();
+        _window.Create(x, y, 200, 100);
 
-        _window.Create(x, y, w, h);
         _window.HitTest = HitTest;
         _window.MouseMoved += () => _needsRedraw = true;
         _window.MouseLeft += OnMouseLeft;
@@ -149,6 +159,12 @@ internal sealed class IslandApp : IDisposable
         _window.Woken += () => _needsRedraw = true;
         _window.Closed += () => _running = false;
         _window.DisplayChanged += RepositionStage;
+        _window.DpiChanged += _ => RepositionStage();
+
+        // Теперь DPI известен — задаём настоящий размер сцены до создания
+        // swapchain, иначе островок окажется шире окна и обрежется по краям.
+        ApplyStageBounds();
+        var (w, h) = (_window.Width, _window.Height);
 
         _gpu.Initialize(_window.Handle, w, h);
         Log.Write($"GPU: {_gpu.AdapterName}; сцена {w}x{h} @ dpi {_window.Dpi}; " +
@@ -169,37 +185,47 @@ internal sealed class IslandApp : IDisposable
         RenderLoop();
     }
 
-    private (int x, int y, int w, int h) ComputeStageBounds()
+    private static MONITORINFO CurrentMonitor()
     {
         Win32.GetCursorPos(out var cursor);
         var monitor = Win32.MonitorFromPoint(cursor, Win32.MONITOR_DEFAULTTOPRIMARY);
-
         var info = new MONITORINFO { cbSize = (uint)Marshal.SizeOf<MONITORINFO>() };
         Win32.GetMonitorInfoW(monitor, ref info);
-
-        // Масштаб монитора берём из его геометрии: окна ещё нет, спросить
-        // GetDpiForWindow не у чего.
-        var scale = _window.Handle != 0 ? _window.Scale : GuessScale(info);
-        var w = (int)(StageLogicalWidth * scale);
-        var h = (int)(StageLogicalHeight * scale);
-        var x = info.rcMonitor.Left + (info.rcMonitor.Width - w) / 2;
-        var y = info.rcMonitor.Top;
-        return (x, y, w, h);
+        return info;
     }
 
-    private static float GuessScale(in MONITORINFO info)
+    private static (int x, int y) MonitorTopCenter()
     {
-        // Физические пиксели монитора нам известны, логические — нет.
-        // Стартуем от 100%; после создания окна DPI уточняется и сцена
-        // пересчитывается в RepositionStage.
-        return 1f;
+        var info = CurrentMonitor();
+        return (info.rcMonitor.Left + info.rcMonitor.Width / 2, info.rcMonitor.Top);
+    }
+
+    /// <summary>
+    /// Ставит сцену по центру верхнего края монитора, переводя логический размер
+    /// в физические пиксели по текущему DPI. Сцена должна быть заметно шире
+    /// островка — в запас идут тень и раскрытое состояние.
+    /// </summary>
+    private void ApplyStageBounds()
+    {
+        var info = CurrentMonitor();
+        var scale = _window.Scale;
+
+        var w = (int)MathF.Round(StageLogicalWidth * scale);
+        var h = (int)MathF.Round(StageLogicalHeight * scale);
+
+        // Если монитор узкий, сцену шире него делать нельзя.
+        w = Math.Min(w, info.rcMonitor.Width);
+
+        var x = info.rcMonitor.Left + (info.rcMonitor.Width - w) / 2;
+        var y = info.rcMonitor.Top;
+
+        _window.SetBounds(x, y, w, h);
     }
 
     private void RepositionStage()
     {
-        var (x, y, w, h) = ComputeStageBounds();
-        _window.SetBounds(x, y, w, h);
-        _gpu.Resize(w, h);
+        ApplyStageBounds();
+        _gpu.Resize(_window.Width, _window.Height);
         UpdateWatcherRect();
         _needsRedraw = true;
     }
@@ -466,6 +492,14 @@ internal sealed class IslandApp : IDisposable
                 // Ждём готовности DXGI принять следующий кадр — привязка к развёртке.
                 OverlayWindow.WaitForInputOrHandles(waitHandles, 100);
             }
+            else if (_media.Snapshot.IsPlaying && _island.Mode == IslandMode.Rest)
+            {
+                // Играет музыка и виден компактный вид — крутим эквалайзер
+                // на пониженной частоте.
+                OverlayWindow.WaitForInputOrHandles(empty, MusicFrameIntervalMs);
+                _needsRedraw = true;
+                last = Stopwatch.GetTimestamp();
+            }
             else
             {
                 // Простой: поток спит до ввода. Ноль кадров, ноль CPU.
@@ -524,6 +558,7 @@ internal sealed class IslandApp : IDisposable
         // Прямоугольники кнопок известны с прошлого кадра — задержка в один кадр
         // при наведении незаметна, зато не нужно считать раскладку дважды.
         _content.HoveredButton = _content.HitButton(_window.CursorClient.X, _window.CursorClient.Y);
+        _content.MusicPhase = (float)_uptime.Elapsed.TotalSeconds;
 
         _content.Draw(canvas, _island, _gpu.Width, _window.Scale,
             _media.Snapshot, _artwork, _power.Snapshot);

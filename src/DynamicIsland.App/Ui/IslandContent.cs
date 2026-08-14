@@ -48,6 +48,9 @@ internal sealed class IslandContent : IDisposable
     /// <summary>Кнопка под курсором — подсвечивается кружком. Ставит вызывающий.</summary>
     public IslandButton HoveredButton { get; set; } = IslandButton.None;
 
+    /// <summary>Время в секундах для анимации эквалайзера. Ставит вызывающий.</summary>
+    public float MusicPhase { get; set; }
+
     public IslandContent()
     {
         var ui = SKTypeface.FromFamilyName("Segoe UI", SKFontStyleWeight.Normal,
@@ -132,7 +135,7 @@ internal sealed class IslandContent : IDisposable
 
         if (media.HasSession && media.IsPlaying)
         {
-            DrawEqualizer(canvas, rect.Right - pad - 14f * scale, rect.MidY, scale, alpha);
+            DrawEqualizer(canvas, rect.Right - pad, rect.MidY, scale, alpha);
         }
         else if (power.HasBattery)
         {
@@ -368,19 +371,32 @@ internal sealed class IslandContent : IDisposable
         return b.Detach();
     }
 
-    /// <summary>Три столбика — намёк, что музыка играет, без анимации ради простоя.</summary>
-    private void DrawEqualizer(SKCanvas canvas, float x, float centerY, float scale, float alpha)
+    // Столбики ходят с разными частотами — при кратных они двигались бы
+    // синхронно и выглядели как одна прыгающая полоска.
+    private static readonly float[] BarSpeeds = [6.1f, 8.3f, 4.7f, 7.2f];
+    private static readonly float[] BarPhases = [0f, 1.9f, 3.4f, 5.1f];
+
+    /// <summary>
+    /// Живой эквалайзер, выровненный по правому краю. Рисуется только когда
+    /// музыка действительно играет — в паузе и без сессии его нет, и приложение
+    /// снова уходит в простой.
+    /// </summary>
+    private void DrawEqualizer(SKCanvas canvas, float rightX, float centerY, float scale, float alpha)
     {
         _fill.Color = Accent.WithAlpha((byte)(alpha * 255));
-        var w = 3f * scale;
-        var gap = 4f * scale;
-        Span<float> heights = [8f, 14f, 10f];
 
-        for (var i = 0; i < heights.Length; i++)
+        var w = 3f * scale;
+        var gap = 3.5f * scale;
+        var totalWidth = BarSpeeds.Length * w + (BarSpeeds.Length - 1) * gap;
+        var left = rightX - totalWidth;
+
+        for (var i = 0; i < BarSpeeds.Length; i++)
         {
-            var h = heights[i] * scale;
+            var wave = 0.5f + 0.5f * MathF.Sin(MusicPhase * BarSpeeds[i] + BarPhases[i]);
+            var h = (5f + 11f * wave) * scale;
+
             canvas.DrawRoundRect(
-                SKRect.Create(x + i * (w + gap), centerY - h / 2f, w, h),
+                SKRect.Create(left + i * (w + gap), centerY - h / 2f, w, h),
                 w / 2f, w / 2f, _fill);
         }
     }

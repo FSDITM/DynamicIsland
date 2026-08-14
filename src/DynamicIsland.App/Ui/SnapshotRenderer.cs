@@ -40,6 +40,14 @@ internal static class SnapshotRenderer
 
         Render(Path.Combine(directory, "07-покой-зарядка.png"), IslandMode.Rest,
             MediaSnapshot.Empty, null, charging, scale);
+
+        // Эквалайзер в трёх фазах — проверяем, что столбики не ходят синхронно.
+        for (var i = 0; i < 3; i++)
+        {
+            Render(Path.Combine(directory, $"10-эквалайзер-фаза{i + 1}.png"), IslandMode.Rest,
+                new MediaSnapshot(true, true, "", "", "spotify"), null, power, scale,
+                phase: 0.17f * (i + 1));
+        }
         using (var art = MakeFakeArtwork())
             Render(Path.Combine(directory, "08-раскрыт-зарядка.png"), IslandMode.Expanded,
                 new MediaSnapshot(true, true, "Дискотека Авария", "Заколебал ты", "spotify"),
@@ -53,7 +61,7 @@ internal static class SnapshotRenderer
 
     private static void Render(string path, IslandMode mode, MediaSnapshot media,
                                SKImage? artwork, PowerSnapshot power, float scale,
-                               IslandButton hovered = IslandButton.None)
+                               IslandButton hovered = IslandButton.None, float phase = 0f)
     {
         var width = (int)(620 * scale);
         var height = (int)(210 * scale);
@@ -70,7 +78,7 @@ internal static class SnapshotRenderer
         // установившуюся форму, а не первый кадр анимации.
         for (var i = 0; i < 600; i++) island.Update(1f / 120f);
 
-        using var content = new IslandContent();
+        using var content = new IslandContent { MusicPhase = phase };
 
         // Подсветка кнопки требует, чтобы её прямоугольники уже были посчитаны:
         // первый проход в никуда задаёт раскладку, второй рисует с подсветкой.
