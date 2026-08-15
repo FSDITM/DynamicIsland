@@ -53,6 +53,29 @@ internal sealed class OverlayWindow : IDisposable
     /// <summary>Будит цикл отрисовки из любого потока.</summary>
     public void Wake() => Win32.PostMessageW(Handle, Win32.WM_APP_WAKE, 0, 0);
 
+    private bool _clickThrough = true;
+
+    /// <summary>
+    /// Полная прозрачность окна для ввода через WS_EX_TRANSPARENT.
+    ///
+    /// Отвечать HTTRANSPARENT на WM_NCHITTEST оказалось недостаточно надёжно:
+    /// это просьба к системе пропустить клик дальше, и она срабатывает не во
+    /// всех путях доставки ввода. С этим стилем окно ввод получить физически
+    /// не может — терять чужие нажатия нечем.
+    /// </summary>
+    public void SetClickThrough(bool value)
+    {
+        if (Handle == 0 || _clickThrough == value) return;
+        _clickThrough = value;
+
+        var style = Win32.GetWindowLongPtrW(Handle, Win32.GWL_EXSTYLE);
+        var updated = value
+            ? style | (nint)Win32.WS_EX_TRANSPARENT
+            : style & ~(nint)Win32.WS_EX_TRANSPARENT;
+
+        Win32.SetWindowLongPtrW(Handle, Win32.GWL_EXSTYLE, updated);
+    }
+
     /// <summary>Перехватить мышь: сообщения продолжат приходить и вне окна.</summary>
     public void CaptureMouse() => Win32.SetCapture(Handle);
 
@@ -93,10 +116,13 @@ internal sealed class OverlayWindow : IDisposable
         }
         _classRegistered = true;
 
+        // WS_EX_TRANSPARENT с самого начала: пока пользователь не навёлся
+        // намеренно, окно вообще не участвует в доставке ввода.
         const uint exStyle = Win32.WS_EX_NOREDIRECTIONBITMAP
                            | Win32.WS_EX_TOOLWINDOW
                            | Win32.WS_EX_NOACTIVATE
-                           | Win32.WS_EX_TOPMOST;
+                           | Win32.WS_EX_TOPMOST
+                           | Win32.WS_EX_TRANSPARENT;
 
         Handle = Win32.CreateWindowExW(exStyle, ClassName, "DynamicIsland",
             Win32.WS_POPUP, x, y, width, height,

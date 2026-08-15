@@ -100,6 +100,7 @@ internal sealed class IslandApp : IDisposable
     private static readonly long DwellTicks = Stopwatch.Frequency * 220 / 1000;
     private static readonly long DwellOverWindowTicks = Stopwatch.Frequency * 400 / 1000;
     private bool _cursorInside;
+    private bool _cursorNearStage;
     private long _cursorEnteredAt;
 
     private SKImage? _artwork;
@@ -349,7 +350,13 @@ internal sealed class IslandApp : IDisposable
         var rect = _island.GetRect(_gpu.Width, _window.Scale);
 
         if (_island.Mode == IslandMode.Notch)
-            return new SKRect(rect.Left, 0, rect.Right, 4f * _window.Scale);
+        {
+            // По высоте — сама полоска плюс небольшой запас: целиться в неё
+            // должно быть удобно. Клики при этом всё равно не пропадут: пока
+            // раскрытия не случилось, окно прозрачно для ввода.
+            var height = (_island.NotchSize.Y + 6f) * _window.Scale;
+            return new SKRect(rect.Left, 0, rect.Right, height);
+        }
 
         rect.Inflate(6f * _window.Scale, 6f * _window.Scale);
 
@@ -422,20 +429,42 @@ internal sealed class IslandApp : IDisposable
         Stopwatch.GetTimestamp() - _cursorEnteredAt >= RequiredDwellTicks;
 
     /// <summary>
-    /// Пока островок раскрыт, проверяем курсор сами: за пределами его фигуры
-    /// окно прозрачно для мыши и WM_MOUSELEAVE может не прийти.
+    /// Определяет, рядом ли курсор, опросом его позиции.
+    ///
+    /// Раньше это делалось по WM_NCHITTEST, но окно теперь по умолчанию
+    /// полностью прозрачно для ввода и таких сообщений не получает. GetCursorPos
+    /// стоит доли микросекунды, десять раз в секунду это ничего не стоит —
+    /// и работает независимо от того, кому система отдаёт нажатия.
     /// </summary>
-    private void PollCursorWhileExpanded()
+    private void PollCursor()
     {
         if (_scrubbing) return;
-        if (_island.Mode != IslandMode.Expanded && !_cursorInside) return;
 
         Win32.GetCursorPos(out var screen);
         var point = screen;
         Win32.ScreenToClient(_window.Handle, ref point);
 
-        UpdateCursorPresence(TriggerRect().Contains(point.X, point.Y));
+        // Курсор далеко от сцены — опрашивать часто незачем.
+        var margin = 80f * _window.Scale;
+        _cursorNearStage = point.X > -margin && point.X < _gpu.Width + margin &&
+                           point.Y > -margin && point.Y < _gpu.Height + margin;
+
+        UpdateCursorPresence(_island.Mode != IslandMode.Hidden &&
+                             TriggerRect().Contains(point.X, point.Y));
     }
+
+    /// <summary>Как часто опрашивать курсор: рядом — часто, вдали — редко.</summary>
+    private uint CursorPollIntervalMs =>
+        _cursorInside || _island.Mode == IslandMode.Expanded ? 50u
+        : _cursorNearStage ? 90u
+        : 350u;
+
+    /// <summary>
+    /// Окно принимает ввод только когда пользователь сам навёлся или тянет
+    /// ползунок. В любой другой момент оно для мыши не существует.
+    /// </summary>
+    private void ApplyInputTransparency() =>
+        _window.SetClickThrough(!(HoverEngaged || _scrubbing));
 
     private void OnMouseLeft()
     {
@@ -549,7 +578,8 @@ internal sealed class IslandApp : IDisposable
                 }
             }
 
-            PollCursorWhileExpanded();
+            PollCursor();
+            ApplyInputTransparency();
 
             var mode = ResolveMode();
             if (mode != lastMode)
@@ -628,19 +658,16 @@ internal sealed class IslandApp : IDisposable
                 _needsRedraw = true;
                 last = Stopwatch.GetTimestamp();
             }
-            else if (_cursorInside || _island.Mode == IslandMode.Expanded || _scrubbing)
-            {
-                // Курсор рядом или островок раскрыт: нужно вовремя заметить
-                // истечение задержки перед раскрытием и уход курсора.
-                OverlayWindow.WaitForInputOrHandles(empty, 100);
-                last = Stopwatch.GetTimestamp();
-            }
             else
             {
-                // Простой: поток спит до ввода. Ноль кадров, ноль CPU.
+                // Кадры не рисуем, но курсор опрашиваем: окно прозрачно для
+                // ввода и сообщений о мыши не получает, узнать о наведении
+                // больше неоткуда. Частота падает до трёх раз в секунду, когда
+                // курсор далеко от островка.
                 _fps = 0;
                 idleWaits++;
-                OverlayWindow.WaitForInputOrHandles(empty, _selfTestSeconds > 0 ? 8u : Win32.INFINITE);
+                OverlayWindow.WaitForInputOrHandles(empty,
+                    _selfTestSeconds > 0 ? 8u : CursorPollIntervalMs);
                 last = Stopwatch.GetTimestamp();
             }
         }

@@ -200,6 +200,14 @@ internal static class Win32
     [DllImport("user32.dll")]
     public static extern uint GetDpiForWindow(nint hwnd);
 
+    public const int GWL_EXSTYLE = -20;
+
+    [DllImport("user32.dll", SetLastError = true, EntryPoint = "GetWindowLongPtrW")]
+    public static extern nint GetWindowLongPtrW(nint hWnd, int nIndex);
+
+    [DllImport("user32.dll", SetLastError = true, EntryPoint = "SetWindowLongPtrW")]
+    public static extern nint SetWindowLongPtrW(nint hWnd, int nIndex, nint dwNewLong);
+
     [DllImport("user32.dll")]
     public static extern nint GetForegroundWindow();
 
