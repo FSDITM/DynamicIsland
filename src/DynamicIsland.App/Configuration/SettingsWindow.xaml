@@ -248,14 +248,21 @@
                 <Setter.Value>
                     <ControlTemplate TargetType="ComboBox">
                         <Grid>
+                            <!-- Цвет текста пробрасывается явно: ToggleButton это
+                                 Control, у него свой Foreground из системной темы,
+                                 и он перебивает унаследованный от окна. Без этого
+                                 выбранное значение рисовалось почти чёрным. -->
                             <ToggleButton x:Name="Toggle" Focusable="False" ClickMode="Press"
+                                          Foreground="{TemplateBinding Foreground}"
+                                          TextElement.Foreground="{TemplateBinding Foreground}"
                                           IsChecked="{Binding IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}">
                                 <ToggleButton.Template>
                                     <ControlTemplate TargetType="ToggleButton">
                                         <Border x:Name="Bd" Background="#FF26262E" CornerRadius="8" Padding="10,7">
                                             <Grid>
                                                 <ContentPresenter x:Name="Content" Margin="0,0,18,0"
-                                                                  HorizontalAlignment="Left"/>
+                                                                  HorizontalAlignment="Left"
+                                                                  TextElement.Foreground="{StaticResource Fg}"/>
                                                 <Path Data="M 0 0 L 4 4 L 8 0" Stroke="#FF9A9AA4" StrokeThickness="1.6"
                                                       HorizontalAlignment="Right" VerticalAlignment="Center"
                                                       StrokeEndLineCap="Round" StrokeStartLineCap="Round"/>
