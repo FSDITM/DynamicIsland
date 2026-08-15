@@ -5,11 +5,16 @@
         Width="860" Height="660" MinWidth="760" MinHeight="560"
         WindowStartupLocation="CenterScreen"
         Background="#FF101014"
-        TextOptions.TextFormattingMode="Ideal"
+        TextOptions.TextFormattingMode="Display"
         TextOptions.TextRenderingMode="ClearType"
         UseLayoutRounding="True"
         SnapsToDevicePixels="True">
 
+    <!--
+        TextFormattingMode=Display, а не Ideal: Ideal не привязывает глифы
+        к пиксельной сетке, и мелкий текст на обычном экране расплывается.
+        Размеры шрифтов — целые числа по той же причине.
+    -->
     <Window.Resources>
 
         <!-- ============ Палитра ============ -->
@@ -18,7 +23,9 @@
         <SolidColorBrush x:Key="Card"      Color="#FF1C1C23"/>
         <SolidColorBrush x:Key="CardHover" Color="#FF23232B"/>
         <SolidColorBrush x:Key="Fg"        Color="#FFF2F2F5"/>
-        <SolidColorBrush x:Key="FgMuted"   Color="#FF8E8E99"/>
+        <!-- Приглушённый текст был слишком тёмным для 12 пикселей: подсказки
+             читались хуже, чем должны. -->
+        <SolidColorBrush x:Key="FgMuted"   Color="#FFA8A8B4"/>
         <SolidColorBrush x:Key="Line"      Color="#FF2A2A33"/>
         <SolidColorBrush x:Key="Accent"    Color="#FF0A84FF"/>
         <SolidColorBrush x:Key="TrackOff"  Color="#FF3A3A44"/>
@@ -27,7 +34,7 @@
         <Style TargetType="TextBlock">
             <Setter Property="Foreground" Value="{StaticResource Fg}"/>
             <Setter Property="VerticalAlignment" Value="Center"/>
-            <Setter Property="FontSize" Value="13.5"/>
+            <Setter Property="FontSize" Value="14"/>
         </Style>
 
         <Style x:Key="Title" TargetType="TextBlock">
@@ -39,23 +46,25 @@
 
         <Style x:Key="Subtitle" TargetType="TextBlock">
             <Setter Property="Foreground" Value="{StaticResource FgMuted}"/>
-            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="FontSize" Value="14"/>
+            <Setter Property="LineHeight" Value="19"/>
             <Setter Property="TextWrapping" Value="Wrap"/>
-            <Setter Property="Margin" Value="0,0,0,20"/>
+            <Setter Property="Margin" Value="0,2,0,22"/>
         </Style>
 
         <Style x:Key="GroupCaption" TargetType="TextBlock">
             <Setter Property="Foreground" Value="{StaticResource FgMuted}"/>
-            <Setter Property="FontSize" Value="11.5"/>
+            <Setter Property="FontSize" Value="12"/>
             <Setter Property="FontWeight" Value="SemiBold"/>
             <Setter Property="Margin" Value="14,0,0,7"/>
         </Style>
 
         <Style x:Key="RowHint" TargetType="TextBlock">
             <Setter Property="Foreground" Value="{StaticResource FgMuted}"/>
-            <Setter Property="FontSize" Value="11.5"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="LineHeight" Value="18"/>
             <Setter Property="TextWrapping" Value="Wrap"/>
-            <Setter Property="Margin" Value="0,3,0,0"/>
+            <Setter Property="Margin" Value="0,4,0,0"/>
         </Style>
 
         <!-- ============ Тумблер ============ -->
@@ -177,7 +186,7 @@
             <Setter Property="CaretBrush" Value="{StaticResource Fg}"/>
             <Setter Property="BorderThickness" Value="0"/>
             <Setter Property="Padding" Value="10,7"/>
-            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="FontSize" Value="14"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="TextBox">
@@ -192,7 +201,7 @@
         <!-- ============ Выпадающий список ============ -->
         <Style TargetType="ComboBoxItem">
             <Setter Property="Foreground" Value="{StaticResource Fg}"/>
-            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="FontSize" Value="14"/>
             <Setter Property="Padding" Value="10,7"/>
             <Setter Property="Template">
                 <Setter.Value>
@@ -213,7 +222,7 @@
 
         <Style TargetType="ComboBox">
             <Setter Property="Foreground" Value="{StaticResource Fg}"/>
-            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="FontSize" Value="14"/>
             <Setter Property="MinWidth" Value="200"/>
             <Setter Property="VerticalAlignment" Value="Center"/>
             <Setter Property="Cursor" Value="Hand"/>
@@ -266,7 +275,7 @@
             <Setter Property="Foreground" Value="{StaticResource Fg}"/>
             <Setter Property="BorderThickness" Value="0"/>
             <Setter Property="Padding" Value="16,9"/>
-            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="FontSize" Value="14"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Template">
                 <Setter.Value>
@@ -299,7 +308,7 @@
 
         <Style x:Key="NavItem" TargetType="ListBoxItem">
             <Setter Property="Foreground" Value="{StaticResource Fg}"/>
-            <Setter Property="FontSize" Value="13.5"/>
+            <Setter Property="FontSize" Value="14"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Margin" Value="8,2"/>
             <Setter Property="Template">

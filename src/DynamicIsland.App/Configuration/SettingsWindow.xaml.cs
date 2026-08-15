@@ -707,9 +707,15 @@ internal static class SettingsPreview
         System.Windows.Threading.Dispatcher.PushFrame(frame);
     }
 
+    /// <summary>
+    /// Пишет снимок один к одному с экраном.
+    ///
+    /// Двойной масштаб здесь вреден: мелкий текст на нём выглядит чётким
+    /// всегда, и проблема с читаемостью на обычном экране остаётся невидимой.
+    /// </summary>
     private static void Save(Window window, string path)
     {
-        const double scale = 2.0;
+        const double scale = 1.0;
         var width = (int)(window.ActualWidth * scale);
         var height = (int)(window.ActualHeight * scale);
         if (width <= 0 || height <= 0) return;
