@@ -466,6 +466,34 @@ internal sealed class IslandApp : IDisposable
     private void ApplyInputTransparency() =>
         _window.SetClickThrough(!(HoverEngaged || _scrubbing));
 
+    /// <summary>
+    /// Сжимает окно до фигуры островка. Запас берём под тень — она уходит
+    /// на 26 логических пикселей, и обрезать её регионом нельзя.
+    /// </summary>
+    private void ApplyWindowShape()
+    {
+        var scale = _window.Scale;
+        var rect = _island.GetRect(_gpu.Width, scale);
+
+        // Запас ровно под текущую тень: в свёрнутом виде она слабая, и раздувать
+        // окно на всякий случай нельзя — это снова была бы зона, перекрывающая
+        // чужие окна.
+        var blur = _island.Mode == IslandMode.Expanded ? 26f : 9f;
+        var margin = (blur * 1.6f + 4f) * scale;
+
+        var left = (int)MathF.Floor(rect.Left - margin);
+        var top = 0;
+        var right = (int)MathF.Ceiling(rect.Right + margin);
+        var bottom = (int)MathF.Ceiling(rect.Bottom + margin);
+
+        left = Math.Max(0, left);
+        right = Math.Min(_gpu.Width, right);
+        bottom = Math.Min(_gpu.Height, bottom);
+
+        var radius = (int)(_island.GetRadius(rect, scale) + margin);
+        _window.SetShape(left, top, right, bottom, radius);
+    }
+
     private void OnMouseLeft()
     {
         // Во время перетаскивания курсор законно уходит за край островка —
@@ -580,6 +608,7 @@ internal sealed class IslandApp : IDisposable
 
             PollCursor();
             ApplyInputTransparency();
+            ApplyWindowShape();
 
             var mode = ResolveMode();
             if (mode != lastMode)

@@ -208,6 +208,15 @@ internal static class Win32
     [DllImport("user32.dll", SetLastError = true, EntryPoint = "SetWindowLongPtrW")]
     public static extern nint SetWindowLongPtrW(nint hWnd, int nIndex, nint dwNewLong);
 
+    // Регион окна — авторитетная граница для системы: точки вне него не
+    // считаются частью окна вообще, ни для отрисовки, ни для попадания мыши.
+    [DllImport("gdi32.dll")]
+    public static extern nint CreateRoundRectRgn(int left, int top, int right, int bottom,
+                                                 int widthEllipse, int heightEllipse);
+
+    [DllImport("user32.dll")]
+    public static extern int SetWindowRgn(nint hWnd, nint hRgn, bool bRedraw);
+
     [DllImport("user32.dll")]
     public static extern nint GetForegroundWindow();
 

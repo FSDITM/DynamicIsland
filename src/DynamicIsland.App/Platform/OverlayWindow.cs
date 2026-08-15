@@ -76,6 +76,32 @@ internal sealed class OverlayWindow : IDisposable
         Win32.SetWindowLongPtrW(Handle, Win32.GWL_EXSTYLE, updated);
     }
 
+    private (int L, int T, int R, int B) _region = (-1, -1, -1, -1);
+
+    /// <summary>
+    /// Ограничивает окно фигурой островка.
+    ///
+    /// Это главная защита от перехвата чужих нажатий: окно-сцена размером
+    /// 930x315 занимало треть экрана, и всё это время оно физически лежало
+    /// поверх чужих окон. Регион сжимает его до самого островка с запасом на
+    /// тень — за пределами региона окна для системы просто нет.
+    /// </summary>
+    public void SetShape(int left, int top, int right, int bottom, int radius)
+    {
+        // Перестраивать регион ради долей пикселя незачем — это вызов GDI.
+        if (Math.Abs(_region.L - left) < 2 && Math.Abs(_region.T - top) < 2 &&
+            Math.Abs(_region.R - right) < 2 && Math.Abs(_region.B - bottom) < 2)
+            return;
+
+        _region = (left, top, right, bottom);
+
+        var rgn = Win32.CreateRoundRectRgn(left, top, right, bottom, radius, radius);
+        if (rgn == 0) return;
+
+        // Регион переходит во владение системы — удалять его нельзя.
+        Win32.SetWindowRgn(Handle, rgn, false);
+    }
+
     /// <summary>Перехватить мышь: сообщения продолжат приходить и вне окна.</summary>
     public void CaptureMouse() => Win32.SetCapture(Handle);
 
