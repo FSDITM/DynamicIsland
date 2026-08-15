@@ -17,6 +17,10 @@
     <AssemblyName>DynamicIsland</AssemblyName>
     <RootNamespace>DynamicIsland</RootNamespace>
 
+    <!-- WPF нужен только окну настроек. Оверлей рисуется своим GPU-ядром,
+         и эти сборки грузятся лишь при первом открытии настроек. -->
+    <UseWPF>true</UseWPF>
+
     <!-- Оверлей живёт в фоне часами: воркстейшн-GC без фонового потока даёт
          меньше пауз и меньше простаивающих потоков, чем серверный GC. -->
     <ServerGarbageCollection>false</ServerGarbageCollection>

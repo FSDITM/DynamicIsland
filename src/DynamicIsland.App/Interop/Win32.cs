@@ -194,6 +194,27 @@ internal static class Win32
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     public static extern bool GetMonitorInfoW(nint hMonitor, ref MONITORINFO lpmi);
 
+    public delegate bool MonitorEnumProc(nint hMonitor, nint hdc, ref RECT clip, nint data);
+
+    [DllImport("user32.dll")]
+    public static extern bool EnumDisplayMonitors(nint hdc, nint clip, MonitorEnumProc proc, nint data);
+
+    /// <summary>Все мониторы слева направо — порядок стабилен между запусками.</summary>
+    public static List<MONITORINFO> GetMonitors()
+    {
+        var list = new List<MONITORINFO>();
+
+        EnumDisplayMonitors(0, 0, (nint handle, nint _, ref RECT _, nint _) =>
+        {
+            var info = new MONITORINFO { cbSize = (uint)Marshal.SizeOf<MONITORINFO>() };
+            if (GetMonitorInfoW(handle, ref info)) list.Add(info);
+            return true;
+        }, 0);
+
+        list.Sort((a, b) => a.rcMonitor.Left.CompareTo(b.rcMonitor.Left));
+        return list;
+    }
+
     [DllImport("user32.dll")]
     public static extern bool SetProcessDpiAwarenessContext(nint value);
 
@@ -216,6 +237,20 @@ internal static class Win32
 
     [DllImport("user32.dll")]
     public static extern int SetWindowRgn(nint hWnd, nint hRgn, bool bRedraw);
+
+    // --- Глобальная горячая клавиша ---
+    public const uint WM_HOTKEY = 0x0312;
+    public const uint MOD_ALT = 0x0001;
+    public const uint MOD_CONTROL = 0x0002;
+    public const uint MOD_SHIFT = 0x0004;
+    public const uint MOD_WIN = 0x0008;
+    public const uint MOD_NOREPEAT = 0x4000;
+
+    [DllImport("user32.dll")]
+    public static extern bool RegisterHotKey(nint hWnd, int id, uint fsModifiers, uint vk);
+
+    [DllImport("user32.dll")]
+    public static extern bool UnregisterHotKey(nint hWnd, int id);
 
     [DllImport("user32.dll")]
     public static extern nint GetForegroundWindow();

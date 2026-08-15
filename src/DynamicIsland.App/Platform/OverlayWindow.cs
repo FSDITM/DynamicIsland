@@ -50,6 +50,9 @@ internal sealed class OverlayWindow : IDisposable
     /// <summary>Фоновый поток попросил перерисовать кадр.</summary>
     public event Action? Woken;
 
+    /// <summary>Нажата зарегистрированная глобальная горячая клавиша.</summary>
+    public event Action? HotkeyPressed;
+
     /// <summary>Будит цикл отрисовки из любого потока.</summary>
     public void Wake() => Win32.PostMessageW(Handle, Win32.WM_APP_WAKE, 0, 0);
 
@@ -229,6 +232,10 @@ internal sealed class OverlayWindow : IDisposable
 
             case Win32.WM_MOUSEWHEEL:
                 MouseWheel?.Invoke((short)((wParam >> 16) & 0xFFFF));
+                return 0;
+
+            case Win32.WM_HOTKEY:
+                HotkeyPressed?.Invoke();
                 return 0;
 
             case Win32.WM_APP_WAKE:

@@ -1,3 +1,4 @@
+using System.IO;
 using DynamicIsland.Services;
 using SkiaSharp;
 
@@ -78,21 +79,22 @@ internal static class SnapshotRenderer
         using var surface = SKSurface.Create(info);
         var canvas = surface.Canvas;
 
-        var island = new Island();
+        var settings = new Configuration.Settings();
+        var island = new Island(settings);
         island.SetMode(mode);
 
         // Прогоняем пружины до состояния покоя — снимок должен показывать
         // установившуюся форму, а не первый кадр анимации.
         for (var i = 0; i < 600; i++) island.Update(1f / 120f);
 
-        using var content = new IslandContent { MusicPhase = phase };
+        using var content = new IslandContent(settings) { MusicPhase = phase };
 
         // Подсветка кнопки требует, чтобы её прямоугольники уже были посчитаны:
         // первый проход в никуда задаёт раскладку, второй рисует с подсветкой.
         if (hovered != IslandButton.None)
         {
             using var probe = SKSurface.Create(new SKImageInfo(width, height));
-            content.Draw(probe.Canvas, island, width, scale, media, artwork, power);
+            content.Draw(probe.Canvas, island, width, height, scale, media, artwork, power);
             content.HoveredButton = hovered;
         }
 
@@ -117,7 +119,7 @@ internal static class SnapshotRenderer
         using (var bg = new SKPaint { Color = background })
             canvas.DrawRect(SKRect.Create(0, 0, width, height), bg);
 
-        content.Draw(canvas, island, width, scale, media, artwork, power);
+        content.Draw(canvas, island, width, height, scale, media, artwork, power);
         canvas.RestoreToCount(saved);
     }
 
@@ -136,7 +138,7 @@ internal static class SnapshotRenderer
         for (var x = 0; x < width; x += cell)
             canvas.DrawRect(SKRect.Create(x, y, cell, cell), ((x / cell + y / cell) % 2 == 0) ? a : b);
 
-        content.Draw(canvas, island, width, scale, media, artwork, power);
+        content.Draw(canvas, island, width, height, scale, media, artwork, power);
         canvas.RestoreToCount(saved);
     }
 

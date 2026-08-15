@@ -1,3 +1,4 @@
+using DynamicIsland.Configuration;
 using DynamicIsland.Services;
 using SkiaSharp;
 
@@ -13,11 +14,14 @@ namespace DynamicIsland.Ui;
 /// </summary>
 internal sealed class IslandContent : IDisposable
 {
-    private static readonly SKColor Background = new(10, 10, 12, 255);
+    private readonly Settings _settings;
+
     private static readonly SKColor Border = new(255, 255, 255, 28);
     private static readonly SKColor TextPrimary = new(245, 245, 247, 255);
     private static readonly SKColor TextMuted = new(150, 150, 158, 255);
-    private static readonly SKColor Accent = new(72, 190, 255, 255);
+
+    private SKColor Background => new(_settings.BackgroundColor);
+    private SKColor Accent => new(_settings.AccentColor);
 
     private readonly SKPaint _fill = new() { Style = SKPaintStyle.Fill, IsAntialias = true };
     private readonly SKPaint _stroke = new() { Style = SKPaintStyle.Stroke, IsAntialias = true };
@@ -70,8 +74,10 @@ internal sealed class IslandContent : IDisposable
 
     private SKRect _seekTrack;
 
-    public IslandContent()
+    public IslandContent(Settings settings)
     {
+        _settings = settings;
+
         var ui = SKTypeface.FromFamilyName("Segoe UI", SKFontStyleWeight.Normal,
             SKFontStyleWidth.Normal, SKFontStyleSlant.Upright) ?? SKTypeface.Default;
         var uiBold = SKTypeface.FromFamilyName("Segoe UI", SKFontStyleWeight.SemiBold,
@@ -82,14 +88,14 @@ internal sealed class IslandContent : IDisposable
         _fontSmall = new SKFont(ui, 12) { Subpixel = true, Edging = SKFontEdging.SubpixelAntialias };
     }
 
-    public void Draw(SKCanvas canvas, Island island, float stageWidth, float scale,
+    public void Draw(SKCanvas canvas, Island island, float stageWidth, float stageHeight, float scale,
                      MediaSnapshot media, SKImage? artwork, PowerSnapshot power)
     {
         if (island.Visibility <= 0.01f) return;
 
-        var rect = island.GetRect(stageWidth, scale);
+        var rect = island.GetRect(stageWidth, stageHeight, scale);
         var radius = island.GetRadius(rect, scale);
-        var alpha = island.Visibility;
+        var alpha = island.Visibility * _settings.Opacity;
 
         DrawShell(canvas, rect, radius, scale, island.Mode, alpha);
 
@@ -118,12 +124,14 @@ internal sealed class IslandContent : IDisposable
     private void DrawShell(SKCanvas canvas, SKRect rect, float radius, float scale,
                            IslandMode mode, float alpha)
     {
-        var shadowRadius = (mode == IslandMode.Expanded ? 26f : 9f) * scale;
+        var strength = _settings.ShadowStrength;
+        var shadowRadius = (mode == IslandMode.Expanded ? 26f : 9f) * strength * scale;
         EnsureShadowFilter(shadowRadius);
 
         using var round = new SKRoundRect(rect, radius);
 
-        _shadow.Color = new SKColor(0, 0, 0, (byte)(alpha * (mode == IslandMode.Expanded ? 160 : 95)));
+        var shadowAlpha = alpha * (mode == IslandMode.Expanded ? 160 : 95) * Math.Min(1f, strength);
+        _shadow.Color = new SKColor(0, 0, 0, (byte)Math.Clamp(shadowAlpha, 0f, 255f));
         _shadow.ImageFilter = _shadowFilter;
         canvas.DrawRoundRect(round, _shadow);
 
@@ -144,29 +152,36 @@ internal sealed class IslandContent : IDisposable
 
         var pad = 16f * scale;
         var midY = rect.MidY + 5f * scale;
+        var a = (byte)(alpha * 255);
 
-        _fontClock.Size = 15f * scale;
-        _text.Color = TextPrimary.WithAlpha((byte)(alpha * 255));
-        canvas.DrawText(DateTime.Now.ToString("HH:mm"), rect.Left + pad, midY,
-            SKTextAlign.Left, _fontClock, _text);
+        if (_settings.ShowClock)
+        {
+            _fontClock.Size = 15f * scale;
+            _text.Color = TextPrimary.WithAlpha(a);
+            canvas.DrawText(ClockText(), rect.Left + pad, midY, SKTextAlign.Left, _fontClock, _text);
+        }
 
         _fontSmall.Size = 12f * scale;
 
-        if (media.HasSession && media.IsPlaying)
+        // Справа показываем самое актуальное: играющую музыку, иначе заряд,
+        // иначе дату. Что именно доступно — решают настройки.
+        if (_settings.ShowEqualizer && media.HasSession && media.IsPlaying)
         {
             DrawEqualizer(canvas, rect.Right - pad, rect.MidY, scale, alpha);
         }
-        else if (power.HasBattery)
+        else if (_settings.ShowBattery && power.HasBattery)
         {
-            DrawBatteryLabel(canvas, rect.Right - pad, midY, scale, power, (byte)(alpha * 255));
+            DrawBatteryLabel(canvas, rect.Right - pad, midY, scale, power, a);
         }
-        else
+        else if (_settings.ShowDate)
         {
-            _text.Color = TextMuted.WithAlpha((byte)(alpha * 255));
+            _text.Color = TextMuted.WithAlpha(a);
             canvas.DrawText(DateTime.Now.ToString("ddd, d MMM"), rect.Right - pad, midY,
                 SKTextAlign.Right, _fontSmall, _text);
         }
     }
+
+    private string ClockText() => DateTime.Now.ToString(_settings.Use24HourClock ? "HH:mm" : "h:mm tt");
 
     /// <summary>Развёрнутый вид: обложка, название, исполнитель, управление.</summary>
     private void DrawExpandedLayer(SKCanvas canvas, SKRect rect, float scale,
@@ -181,10 +196,20 @@ internal sealed class IslandContent : IDisposable
         // Верхняя строка: часы и дата слева, заряд справа.
         _fontSmall.Size = 11.5f * scale;
         _text.Color = TextMuted.WithAlpha(a);
-        canvas.DrawText(DateTime.Now.ToString("HH:mm  ddd, d MMM"), rect.Left + pad,
-            rect.Top + 22f * scale, SKTextAlign.Left, _fontSmall, _text);
 
-        DrawBatteryLabel(canvas, rect.Right - pad, rect.Top + 22f * scale, scale, power, a);
+        var header = (_settings.ShowClock, _settings.ShowDate) switch
+        {
+            (true, true) => ClockText() + DateTime.Now.ToString("  ddd, d MMM"),
+            (true, false) => ClockText(),
+            (false, true) => DateTime.Now.ToString("ddd, d MMM"),
+            _ => "",
+        };
+        if (header.Length > 0)
+            canvas.DrawText(header, rect.Left + pad, rect.Top + 22f * scale,
+                SKTextAlign.Left, _fontSmall, _text);
+
+        if (_settings.ShowBattery)
+            DrawBatteryLabel(canvas, rect.Right - pad, rect.Top + 22f * scale, scale, power, a);
 
         // Обложка слева, кнопки справа, текст между ними. Нижние края обложки и
         // кнопок совпадают — это задаёт нижнюю границу содержимого.
@@ -250,7 +275,9 @@ internal sealed class IslandContent : IDisposable
         var elapsedWidth = _fontSmall.MeasureText(elapsed);
         var totalWidth = _fontSmall.MeasureText(total);
 
-        var centerY = rect.Top + 112f * scale;
+        // Привязка к нижнему краю, а не к фиксированной высоте: раскрытый
+        // размер настраивается, и полоса должна следовать за ним.
+        var centerY = rect.Bottom - 20f * scale;
         var gap = 9f * scale;
         var trackLeft = rect.Left + pad + elapsedWidth + gap;
         var trackRight = rect.Right - pad - totalWidth - gap;
@@ -486,9 +513,13 @@ internal sealed class IslandContent : IDisposable
         var totalWidth = BarSpeeds.Length * w + (BarSpeeds.Length - 1) * gap;
         var left = rightX - totalWidth;
 
+        // При выключенной анимации берём фиксированную фазу — столбики просто
+        // стоят на разной высоте.
+        var phase = _settings.AnimateEqualizer ? MusicPhase : 0.4f;
+
         for (var i = 0; i < BarSpeeds.Length; i++)
         {
-            var wave = 0.5f + 0.5f * MathF.Sin(MusicPhase * BarSpeeds[i] + BarPhases[i]);
+            var wave = 0.5f + 0.5f * MathF.Sin(phase * BarSpeeds[i] + BarPhases[i]);
             var h = (5f + 11f * wave) * scale;
 
             canvas.DrawRoundRect(
