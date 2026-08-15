@@ -8,6 +8,19 @@ namespace DynamicIsland.Configuration;
 
 internal enum ScreenAnchor { Top, Bottom }
 
+/// <summary>Когда островок сворачивается в полоску под чужим окном.</summary>
+internal enum CollapseMode
+{
+    /// <summary>Никогда — островок всегда в полной форме.</summary>
+    Never,
+
+    /// <summary>Только для приложений из списка. У них сверху свои вкладки и панели.</summary>
+    ListedApps,
+
+    /// <summary>Для любого окна, перекрывающего зону островка.</summary>
+    AllWindows,
+}
+
 /// <summary>
 /// Все настройки островка в одном месте.
 ///
@@ -59,8 +72,18 @@ internal sealed class Settings : INotifyPropertyChanged
 
     private int _hoverDelayMs = 220;
     private int _hoverOverWindowDelayMs = 400;
-    private bool _collapseUnderWindows = true;
+    private CollapseMode _collapseMode = CollapseMode.ListedApps;
     private bool _hideInFullscreen = true;
+
+    /// <summary>
+    /// Имена процессов без .exe. По умолчанию — браузеры: у них наверху вкладки
+    /// и адресная строка, и островок закрывает именно их.
+    /// </summary>
+    private string[] _collapseApps =
+    [
+        "chrome", "msedge", "firefox", "opera", "opera_gx", "brave",
+        "vivaldi", "browser", "yandex", "tor", "arc", "zen",
+    ];
     private bool _peekOnTrackChange = true;
     private float _peekSeconds = 3.5f;
     private float _animationSpeed = 1f;
@@ -68,8 +91,35 @@ internal sealed class Settings : INotifyPropertyChanged
 
     public int HoverDelayMs { get => _hoverDelayMs; set => Set(ref _hoverDelayMs, Math.Clamp(value, 0, 2000)); }
     public int HoverOverWindowDelayMs { get => _hoverOverWindowDelayMs; set => Set(ref _hoverOverWindowDelayMs, Math.Clamp(value, 0, 3000)); }
-    public bool CollapseUnderWindows { get => _collapseUnderWindows; set => Set(ref _collapseUnderWindows, value); }
+    [JsonConverter(typeof(JsonStringEnumConverter))]
+    public CollapseMode CollapseMode { get => _collapseMode; set => Set(ref _collapseMode, value); }
+
+    public string[] CollapseApps
+    {
+        get => _collapseApps;
+        set => Set(ref _collapseApps, Normalize(value));
+    }
+
     public bool HideInFullscreen { get => _hideInFullscreen; set => Set(ref _hideInFullscreen, value); }
+
+    /// <summary>Сворачиваться ли под окном приложения с таким именем процесса.</summary>
+    public bool ShouldCollapseFor(string processName) => CollapseMode switch
+    {
+        CollapseMode.Never => false,
+        CollapseMode.AllWindows => true,
+        _ => processName.Length > 0 &&
+             _collapseApps.Contains(processName, StringComparer.OrdinalIgnoreCase),
+    };
+
+    /// <summary>Приводит список к виду «без .exe, без пустых, без повторов».</summary>
+    private static string[] Normalize(string[]? apps) => apps is null
+        ? []
+        : apps.Select(a => a.Trim())
+              .Where(a => a.Length > 0)
+              .Select(a => a.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ? a[..^4] : a)
+              .Distinct(StringComparer.OrdinalIgnoreCase)
+              .OrderBy(a => a, StringComparer.OrdinalIgnoreCase)
+              .ToArray();
     public bool PeekOnTrackChange { get => _peekOnTrackChange; set => Set(ref _peekOnTrackChange, value); }
     public float PeekSeconds { get => _peekSeconds; set => Set(ref _peekSeconds, Math.Clamp(value, 0.5f, 15f)); }
 
@@ -142,7 +192,11 @@ internal sealed class Settings : INotifyPropertyChanged
             Log.Write("Настройки не прочитаны, беру значения по умолчанию: " + ex.Message);
         }
 
-        return new Settings();
+        // Файл создаём сразу: иначе до первой правки его нет, и посмотреть
+        // или поправить настройки руками негде.
+        var defaults = new Settings();
+        defaults.Save();
+        return defaults;
     }
 
     public void Save()

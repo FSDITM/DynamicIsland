@@ -92,8 +92,15 @@ public partial class SettingsWindow : Window
                 "накрывал бы то, с чем вы работаете.");
 
         Caption(p, "РЕАКЦИЯ НА ОКНА");
-        Check(p, "Сворачиваться в полоску под развёрнутым окном",
-            () => _settings.CollapseUnderWindows, v => _settings.CollapseUnderWindows = v);
+        Combo(p, "Сворачиваться в полоску",
+            ["Никогда", "Только для приложений из списка", "Под любым окном"],
+            () => (int)_settings.CollapseMode,
+            v => _settings.CollapseMode = (CollapseMode)v);
+        Hint(p, "Островок мешает не всем: браузеру он закрывает вкладки, а терминалу " +
+                "или блокноту эта полоса экрана не нужна. Список решает, для кого сворачиваться.");
+
+        AppList(p);
+
         Check(p, "Прятаться в полноэкранном режиме",
             () => _settings.HideInFullscreen, v => _settings.HideInFullscreen = v);
         Hint(p, "Игры, видео на весь экран и презентации.");
@@ -284,6 +291,52 @@ public partial class SettingsWindow : Window
         host.Children.Add(preview);
         host.Children.Add(text);
         parent.Children.Add(grid);
+    }
+
+    /// <summary>Редактор списка приложений: по одному имени процесса в строке.</summary>
+    private void AppList(Panel parent)
+    {
+        var box = new TextBox
+        {
+            Text = string.Join(Environment.NewLine, _settings.CollapseApps),
+            AcceptsReturn = true,
+            Height = 130,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            Margin = new Thickness(0, 4, 0, 6),
+        };
+
+        box.LostFocus += (_, _) => Commit();
+        _refreshers.Add(() => box.Text = string.Join(Environment.NewLine, _settings.CollapseApps));
+
+        void Commit()
+        {
+            if (_updating) return;
+            _updating = true;
+            _settings.CollapseApps = box.Text.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
+            box.Text = string.Join(Environment.NewLine, _settings.CollapseApps);
+            _updating = false;
+        }
+
+        var add = new Button { Content = "Добавить запущенное…", Style = (Style)FindResource("Action"), Margin = new Thickness(0) };
+        add.Click += (_, _) =>
+        {
+            var picked = RunningAppPicker.Pick(this);
+            if (picked is null) return;
+
+            box.Text = string.Join(Environment.NewLine,
+                box.Text.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries).Append(picked));
+            Commit();
+        };
+
+        parent.Children.Add(box);
+        parent.Children.Add(new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Margin = new Thickness(0, 0, 0, 10),
+            Children = { add },
+        });
+        Hint(parent, "Имя процесса без .exe, по одному в строке. Список применяется, " +
+                     "когда поле теряет фокус.");
     }
 
     private void HotkeyRow(Panel parent)

@@ -428,8 +428,14 @@ internal sealed class IslandApp : IDisposable
         // Пока тянут ползунок, островок не сворачивается, даже если курсор
         // ушёл за его край.
         if (HoverEngaged || _scrubbing || IsPeeking) return IslandMode.Expanded;
-        if (_settings.CollapseUnderWindows && _occlusion == ForegroundWatcher.Occlusion.Covered)
+
+        // Сворачиваемся не под любым окном, а только там, где островок реально
+        // мешает: у браузера сверху вкладки и адресная строка, а терминалу или
+        // блокноту эта полоса экрана не нужна.
+        if (_occlusion == ForegroundWatcher.Occlusion.Covered &&
+            _settings.ShouldCollapseFor(_watcher.ForegroundProcess))
             return IslandMode.Notch;
+
         return IslandMode.Rest;
     }
 
@@ -877,6 +883,8 @@ internal sealed class IslandApp : IDisposable
             $"{_gpu.AdapterName}  |  сцена {_gpu.Width}x{_gpu.Height}  dpi {_window.Dpi}",
             $"кадр {_cpuFrameMs:0.00} ms   fps {_fps:0}   всего {_framesRendered}",
             $"режим {_island.Mode}  окна: {_occlusion}  {(_island.IsAnimating ? "анимация" : "простой")}",
+            $"активно: {(_watcher.ForegroundProcess.Length > 0 ? _watcher.ForegroundProcess : "—")}" +
+            $"  сворачиваться: {(_settings.ShouldCollapseFor(_watcher.ForegroundProcess) ? "да" : "нет")}",
         ];
 
         var y = _gpu.Height - (lines.Length * 15f + 6f) * scale;

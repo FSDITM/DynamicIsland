@@ -376,6 +376,20 @@ internal static class Win32
     public static extern int GetClassNameW(nint hWnd, [Out] char[] lpClassName, int nMaxCount);
 
     [DllImport("user32.dll")]
+    public static extern uint GetWindowThreadProcessId(nint hWnd, out uint processId);
+
+    public delegate bool EnumWindowsProc(nint hWnd, nint lParam);
+
+    [DllImport("user32.dll")]
+    public static extern bool EnumWindows(EnumWindowsProc proc, nint lParam);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern int GetWindowTextLengthW(nint hWnd);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern int GetWindowTextW(nint hWnd, System.Text.StringBuilder text, int count);
+
+    [DllImport("user32.dll")]
     public static extern bool IsIconic(nint hWnd);
 
     [DllImport("user32.dll")]

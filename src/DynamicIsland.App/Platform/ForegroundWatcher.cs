@@ -40,6 +40,36 @@ internal sealed class ForegroundWatcher : IDisposable
 
     public Occlusion State { get; private set; } = Occlusion.Clear;
 
+    /// <summary>Имя процесса активного окна без .exe, в нижнем регистре.</summary>
+    public string ForegroundProcess { get; private set; } = "";
+
+    // Определять процесс по окну — не самая дешёвая операция, а активное окно
+    // между событиями не меняется. Помним последнее.
+    private nint _lastForeground;
+    private string _lastProcess = "";
+
+    private string ProcessNameOf(nint window)
+    {
+        if (window == _lastForeground) return _lastProcess;
+
+        _lastForeground = window;
+        _lastProcess = "";
+
+        try
+        {
+            Win32.GetWindowThreadProcessId(window, out var pid);
+            if (pid != 0)
+                using (var process = System.Diagnostics.Process.GetProcessById((int)pid))
+                    _lastProcess = process.ProcessName.ToLowerInvariant();
+        }
+        catch
+        {
+            // Процесс мог завершиться между вызовами — это не ошибка.
+        }
+
+        return _lastProcess;
+    }
+
     /// <summary>Вызывается, когда состояние изменилось. Приходит из потока хука.</summary>
     public event Action<Occlusion>? StateChanged;
 
@@ -84,8 +114,11 @@ internal sealed class ForegroundWatcher : IDisposable
         if (!force && now - _lastEvaluateTicks < ThrottleTicks) return;
         _lastEvaluateTicks = now;
 
+        var previousProcess = ForegroundProcess;
         var next = Evaluate();
-        if (next == State) return;
+
+        if (next == State && previousProcess == ForegroundProcess) return;
+
         State = next;
         StateChanged?.Invoke(next);
     }
@@ -101,7 +134,10 @@ internal sealed class ForegroundWatcher : IDisposable
         }
 
         var fg = Win32.GetForegroundWindow();
-        if (fg == 0 || fg == _selfWindow) return Occlusion.Clear;
+        if (fg == 0 || fg == _selfWindow) { ForegroundProcess = ""; return Occlusion.Clear; }
+
+        ForegroundProcess = ProcessNameOf(fg);
+
         if (Win32.IsIconic(fg) || !Win32.IsWindowVisible(fg)) return Occlusion.Clear;
         if (!Win32.GetWindowRect(fg, out var rect)) return Occlusion.Clear;
 
