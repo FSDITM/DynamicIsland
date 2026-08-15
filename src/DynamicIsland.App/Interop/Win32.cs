@@ -331,6 +331,17 @@ internal static class Win32
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     public static extern nint LoadIconW(nint hInstance, nint lpIconName);
 
+    public const uint IMAGE_ICON = 1;
+    public const uint LR_LOADFROMFILE = 0x00000010;
+    public const uint LR_DEFAULTSIZE = 0x00000040;
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern nint LoadImageW(nint hInst, [MarshalAs(UnmanagedType.LPWStr)] string name,
+        uint type, int cx, int cy, uint fuLoad);
+
+    [DllImport("user32.dll")]
+    public static extern bool DestroyIcon(nint hIcon);
+
     [DllImport("user32.dll")]
     public static extern nint CreatePopupMenu();
 

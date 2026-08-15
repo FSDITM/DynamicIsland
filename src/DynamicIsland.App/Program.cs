@@ -37,6 +37,41 @@ internal static class Program
             return 0;
         }
 
+        // --icon <ico> [png]: пересобрать логотип приложения.
+        var iconIdx = Array.IndexOf(args, "--icon");
+        if (iconIdx >= 0 && iconIdx + 1 < args.Length)
+        {
+            try
+            {
+                Ui.IconGenerator.Generate(args[iconIdx + 1],
+                    iconIdx + 2 < args.Length ? args[iconIdx + 2] : null);
+                Log.Write("Иконка собрана: " + args[iconIdx + 1]);
+                return 0;
+            }
+            catch (Exception ex)
+            {
+                Log.Write("Иконка не собралась: " + ex);
+                return 1;
+            }
+        }
+
+        // --previewsettings <папка>: отрисовать окно настроек в PNG.
+        var previewIdx = Array.IndexOf(args, "--previewsettings");
+        if (previewIdx >= 0 && previewIdx + 1 < args.Length)
+        {
+            try
+            {
+                Configuration.SettingsPreview.Render(Configuration.Settings.Load(), args[previewIdx + 1]);
+                Log.Write("Окно настроек отрисовано в " + args[previewIdx + 1]);
+                return 0;
+            }
+            catch (Exception ex)
+            {
+                Log.Write("Предпросмотр настроек не удался: " + ex);
+                return 1;
+            }
+        }
+
         var selfTest = 0.0;
         var idx = Array.IndexOf(args, "--selftest");
         if (idx >= 0 && idx + 1 < args.Length) double.TryParse(args[idx + 1], out selfTest);

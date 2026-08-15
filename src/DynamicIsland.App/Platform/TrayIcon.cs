@@ -1,3 +1,4 @@
+using System.IO;
 using System.Runtime.InteropServices;
 using DynamicIsland.Interop;
 
@@ -12,6 +13,30 @@ internal sealed class TrayIcon : IDisposable
 {
     private Win32.NOTIFYICONDATAW _data;
     private bool _added;
+    private nint _icon;
+
+    /// <summary>Путь к иконке приложения рядом с exe.</summary>
+    public static string IconPath { get; } =
+        Path.Combine(AppContext.BaseDirectory, "Resources", "AppIcon.ico");
+
+    /// <summary>
+    /// Иконка приложения нужного размера, либо системная, если файла нет.
+    /// Размер трея зависит от масштаба экрана, поэтому просим системный
+    /// «маленький» размер, а не жёсткие 16 пикселей.
+    /// </summary>
+    private static nint LoadAppIcon()
+    {
+        if (File.Exists(IconPath))
+        {
+            var icon = Win32.LoadImageW(0, IconPath, Win32.IMAGE_ICON, 0, 0,
+                Win32.LR_LOADFROMFILE | Win32.LR_DEFAULTSIZE);
+            if (icon != 0) return icon;
+
+            Log.Write("Иконка трея не загрузилась: " + IconPath);
+        }
+
+        return Win32.LoadIconW(0, Win32.IDI_APPLICATION);
+    }
 
     public void Add(nint hwnd, string tooltip)
     {
@@ -22,7 +47,7 @@ internal sealed class TrayIcon : IDisposable
             uID = 1,
             uFlags = Win32.NIF_MESSAGE | Win32.NIF_ICON | Win32.NIF_TIP,
             uCallbackMessage = Win32.WM_TRAYICON,
-            hIcon = Win32.LoadIconW(0, Win32.IDI_APPLICATION),
+            hIcon = _icon = LoadAppIcon(),
             szTip = tooltip,
             szInfo = string.Empty,
             szInfoTitle = string.Empty,
@@ -75,5 +100,11 @@ internal sealed class TrayIcon : IDisposable
         if (!_added) return;
         Win32.Shell_NotifyIconW(Win32.NIM_DELETE, ref _data);
         _added = false;
+
+        if (_icon != 0)
+        {
+            Win32.DestroyIcon(_icon);
+            _icon = 0;
+        }
     }
 }

@@ -16,6 +16,7 @@
     <SelfContained>false</SelfContained>
     <AssemblyName>DynamicIsland</AssemblyName>
     <RootNamespace>DynamicIsland</RootNamespace>
+    <ApplicationIcon>Resources\AppIcon.ico</ApplicationIcon>
 
     <!-- WPF нужен только окну настроек. Оверлей рисуется своим GPU-ядром,
          и эти сборки грузятся лишь при первом открытии настроек. -->
@@ -32,6 +33,9 @@
     <!-- Rubik: вариативный шрифт для времени, даты и заряда.
          SIL Open Font License, текст лицензии лежит рядом. -->
     <None Include="Resources\Fonts\**" CopyToOutputDirectory="PreserveNewest" />
+
+    <!-- Иконка нужна и рядом с exe: трей и окно настроек грузят её файлом. -->
+    <None Include="Resources\AppIcon.ico" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>
