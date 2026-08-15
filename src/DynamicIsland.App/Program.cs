@@ -94,6 +94,7 @@ internal sealed class IslandApp : IDisposable
     private bool _running = true;
     private bool _needsRedraw = true;
     private bool _hovered;
+    private bool _scrubbing;
     private bool _showHud;
 
     private SKImage? _artwork;
@@ -151,7 +152,7 @@ internal sealed class IslandApp : IDisposable
         _window.Create(x, y, 200, 100);
 
         _window.HitTest = HitTest;
-        _window.MouseMoved += () => _needsRedraw = true;
+        _window.MouseMoved += OnMouseMoved;
         _window.MouseLeft += OnMouseLeft;
         _window.MouseButton += OnMouseButton;
         _window.RightClicked += ShowTrayMenu;
@@ -316,7 +317,9 @@ internal sealed class IslandApp : IDisposable
 
         // В полноэкранном режиме молчим даже про новый трек — там играют или смотрят.
         if (_occlusion == ForegroundWatcher.Occlusion.Fullscreen) return IslandMode.Hidden;
-        if (_hovered || IsPeeking) return IslandMode.Expanded;
+        // Пока тянут ползунок, островок не сворачивается, даже если курсор
+        // ушёл за его край.
+        if (_hovered || _scrubbing || IsPeeking) return IslandMode.Expanded;
         if (_occlusion == ForegroundWatcher.Occlusion.Covered) return IslandMode.Notch;
         return IslandMode.Rest;
     }
@@ -352,21 +355,58 @@ internal sealed class IslandApp : IDisposable
 
     private void OnMouseLeft()
     {
+        // Во время перетаскивания курсор законно уходит за край островка —
+        // сворачиваться нельзя.
+        if (_scrubbing) return;
+
         SetHovered(false);
         _needsRedraw = true;
     }
 
     private void OnMouseButton(bool down)
     {
-        if (down) return;
+        var x = _window.CursorClient.X;
+        var y = _window.CursorClient.Y;
 
-        var button = _content.HitButton(_window.CursorClient.X, _window.CursorClient.Y);
-        switch (button)
+        if (down)
+        {
+            // Нажатие на полосу — сразу переходим в режим перетаскивания и
+            // перехватываем мышь, чтобы не потерять её за краем островка.
+            if (_media.Snapshot.HasTimeline && _content.SeekHitRect.Contains(x, y))
+            {
+                _scrubbing = true;
+                _content.ScrubProgress = _content.ProgressFromX(x);
+                _window.CaptureMouse();
+                _needsRedraw = true;
+            }
+            return;
+        }
+
+        if (_scrubbing)
+        {
+            var target = _content.ScrubProgress ?? 0f;
+            _scrubbing = false;
+            _content.ScrubProgress = null;
+            OverlayWindow.ReleaseMouse();
+            _ = _media.SeekAsync(target);
+            _needsRedraw = true;
+            return;
+        }
+
+        switch (_content.HitButton(x, y))
         {
             case IslandButton.PlayPause: _ = _media.TogglePlayPauseAsync(); break;
             case IslandButton.Next: _ = _media.NextAsync(); break;
             case IslandButton.Previous: _ = _media.PreviousAsync(); break;
         }
+    }
+
+    private void OnMouseMoved()
+    {
+        if (_scrubbing)
+            _content.ScrubProgress = _content.ProgressFromX(_window.CursorClient.X);
+
+        _needsRedraw = true;
     }
 
     private void OnTrayMessage(uint mouseMessage)
@@ -492,9 +532,11 @@ internal sealed class IslandApp : IDisposable
                 // Ждём готовности DXGI принять следующий кадр — привязка к развёртке.
                 OverlayWindow.WaitForInputOrHandles(waitHandles, 100);
             }
-            else if (_media.Snapshot.IsPlaying && _island.Mode == IslandMode.Rest)
+            else if (_media.Snapshot.IsPlaying &&
+                     _island.Mode is IslandMode.Rest or IslandMode.Expanded)
             {
-                // Играет музыка и виден компактный вид — крутим эквалайзер
+                // Играет музыка: в компактном виде крутится эквалайзер,
+                // в раскрытом ползёт полоса перемотки. И то и другое —
                 // на пониженной частоте.
                 OverlayWindow.WaitForInputOrHandles(empty, MusicFrameIntervalMs);
                 _needsRedraw = true;
@@ -558,6 +600,8 @@ internal sealed class IslandApp : IDisposable
         // Прямоугольники кнопок известны с прошлого кадра — задержка в один кадр
         // при наведении незаметна, зато не нужно считать раскладку дважды.
         _content.HoveredButton = _content.HitButton(_window.CursorClient.X, _window.CursorClient.Y);
+        _content.SeekHovered = _scrubbing ||
+            _content.SeekHitRect.Contains(_window.CursorClient.X, _window.CursorClient.Y);
         _content.MusicPhase = (float)_uptime.Elapsed.TotalSeconds;
 
         _content.Draw(canvas, _island, _gpu.Width, _window.Scale,

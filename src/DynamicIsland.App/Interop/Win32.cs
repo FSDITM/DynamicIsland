@@ -294,6 +294,14 @@ internal static class Win32
     [DllImport("user32.dll")]
     public static extern bool SetForegroundWindow(nint hWnd);
 
+    // Захват мыши нужен для перетаскивания ползунка: без него курсор,
+    // ушедший за пределы островка, перестал бы слать нам сообщения.
+    [DllImport("user32.dll")]
+    public static extern nint SetCapture(nint hWnd);
+
+    [DllImport("user32.dll")]
+    public static extern bool ReleaseCapture();
+
     // --- Слежение за активным окном ---
     public const uint EVENT_SYSTEM_FOREGROUND = 0x0003;
     public const uint EVENT_SYSTEM_MINIMIZEEND = 0x0017;

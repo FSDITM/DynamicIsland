@@ -51,6 +51,25 @@ internal sealed class IslandContent : IDisposable
     /// <summary>Время в секундах для анимации эквалайзера. Ставит вызывающий.</summary>
     public float MusicPhase { get; set; }
 
+    /// <summary>
+    /// Пока полосу тянут мышью — позиция под курсором, иначе null.
+    /// Показываем её вместо реальной, чтобы ползунок шёл за пальцем, а не
+    /// возвращался на место до ответа плеера.
+    /// </summary>
+    public float? ScrubProgress { get; set; }
+
+    /// <summary>Зона захвата полосы перемотки. Пустая, если перемотка недоступна.</summary>
+    public SKRect SeekHitRect { get; private set; }
+
+    /// <summary>Доля трека по координате X внутри полосы.</summary>
+    public float ProgressFromX(float x)
+    {
+        if (_seekTrack.Width <= 0) return 0f;
+        return Math.Clamp((x - _seekTrack.Left) / _seekTrack.Width, 0f, 1f);
+    }
+
+    private SKRect _seekTrack;
+
     public IslandContent()
     {
         var ui = SKTypeface.FromFamilyName("Segoe UI", SKFontStyleWeight.Normal,
@@ -201,6 +220,83 @@ internal sealed class IslandContent : IDisposable
             canvas.DrawText("Ничего не воспроизводится", textLeft, artTop + 36f * scale,
                 SKTextAlign.Left, _fontSmall, _text);
         }
+
+        DrawSeekBar(canvas, rect, scale, media, alpha);
+    }
+
+    /// <summary>
+    /// Полоса перемотки со временем по краям. Рисуется только когда плеер
+    /// сообщил длительность и разрешил перемотку — не все источники это умеют.
+    /// </summary>
+    private void DrawSeekBar(SKCanvas canvas, SKRect rect, float scale, MediaSnapshot media, float alpha)
+    {
+        if (!media.HasTimeline)
+        {
+            SeekHitRect = SKRect.Empty;
+            _seekTrack = SKRect.Empty;
+            return;
+        }
+
+        var pad = 16f * scale;
+        var a = (byte)(alpha * 255);
+        var progress = ScrubProgress ?? media.Progress;
+
+        _fontSmall.Size = 11f * scale;
+        var elapsed = FormatTime(ScrubProgress is { } s
+            ? TimeSpan.FromSeconds(media.Duration.TotalSeconds * s)
+            : media.EffectivePosition);
+        var total = FormatTime(media.Duration);
+
+        var elapsedWidth = _fontSmall.MeasureText(elapsed);
+        var totalWidth = _fontSmall.MeasureText(total);
+
+        var centerY = rect.Top + 112f * scale;
+        var gap = 9f * scale;
+        var trackLeft = rect.Left + pad + elapsedWidth + gap;
+        var trackRight = rect.Right - pad - totalWidth - gap;
+        if (trackRight <= trackLeft) return;
+
+        var thickness = 4f * scale;
+        _seekTrack = new SKRect(trackLeft, centerY - thickness / 2f, trackRight, centerY + thickness / 2f);
+
+        // Зона захвата заметно выше самой полосы — иначе в 4 пикселя не попасть.
+        SeekHitRect = new SKRect(trackLeft - gap, centerY - 11f * scale,
+                                 trackRight + gap, centerY + 11f * scale);
+
+        _text.Color = TextMuted.WithAlpha(a);
+        canvas.DrawText(elapsed, rect.Left + pad, centerY + 4f * scale, SKTextAlign.Left, _fontSmall, _text);
+        canvas.DrawText(total, rect.Right - pad, centerY + 4f * scale, SKTextAlign.Right, _fontSmall, _text);
+
+        var radius = thickness / 2f;
+
+        _fill.Color = new SKColor(255, 255, 255, (byte)(alpha * 38));
+        canvas.DrawRoundRect(_seekTrack, radius, radius, _fill);
+
+        var filled = _seekTrack;
+        filled.Right = _seekTrack.Left + _seekTrack.Width * progress;
+        if (filled.Width > 0.5f)
+        {
+            _fill.Color = Accent.WithAlpha(a);
+            canvas.DrawRoundRect(filled, radius, radius, _fill);
+        }
+
+        // Кружок-бегунок появляется при наведении и при перетаскивании.
+        if (SeekHovered || ScrubProgress is not null)
+        {
+            _fill.Color = SKColors.White.WithAlpha(a);
+            canvas.DrawCircle(filled.Right, centerY, (ScrubProgress is not null ? 6.5f : 5f) * scale, _fill);
+        }
+    }
+
+    /// <summary>Курсор над полосой перемотки. Ставит вызывающий.</summary>
+    public bool SeekHovered { get; set; }
+
+    private static string FormatTime(TimeSpan value)
+    {
+        if (value < TimeSpan.Zero) value = TimeSpan.Zero;
+        return value.TotalHours >= 1
+            ? $"{(int)value.TotalHours}:{value.Minutes:00}:{value.Seconds:00}"
+            : $"{value.Minutes}:{value.Seconds:00}";
     }
 
     private void DrawArtwork(SKCanvas canvas, SKRect rect, float scale, SKImage? artwork, float alpha)

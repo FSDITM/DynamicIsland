@@ -11,6 +11,11 @@ namespace DynamicIsland.Ui;
 /// </summary>
 internal static class SnapshotRenderer
 {
+    /// <summary>Играющий трек с фиксированной позицией — снимок должен быть воспроизводимым.</summary>
+    private static MediaSnapshot Playing(string title, string artist, int posSec, int durSec) =>
+        new(true, true, title, artist, "spotify",
+            TimeSpan.FromSeconds(posSec), TimeSpan.FromSeconds(durSec), 0, true);
+
     public static void RenderAll(string directory, float scale = 1.5f)
     {
         Directory.CreateDirectory(directory);
@@ -22,9 +27,11 @@ internal static class SnapshotRenderer
                 new MediaSnapshot(true, true, "Bohemian Rhapsody", "Queen", "spotify"), false),
             ("03-раскрыт-пусто", IslandMode.Expanded, MediaSnapshot.Empty, false),
             ("04-раскрыт-играет", IslandMode.Expanded,
-                new MediaSnapshot(true, true, "Bohemian Rhapsody", "Queen", "spotify"), true),
+                Playing("Bohemian Rhapsody", "Queen", 82, 355), true),
             ("05-раскрыт-пауза", IslandMode.Expanded,
-                new MediaSnapshot(true, false, "Очень длинное название трека которое обязано обрезаться", "Исполнитель с длинным именем", "spotify"), true),
+                new MediaSnapshot(true, false, "Очень длинное название трека которое обязано обрезаться",
+                    "Исполнитель с длинным именем", "spotify",
+                    TimeSpan.FromSeconds(190), TimeSpan.FromSeconds(248), 0, true), true),
             ("06-полоска", IslandMode.Notch, MediaSnapshot.Empty, false),
         };
 

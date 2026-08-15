@@ -50,6 +50,11 @@ internal sealed class OverlayWindow : IDisposable
     /// <summary>Будит цикл отрисовки из любого потока.</summary>
     public void Wake() => Win32.PostMessageW(Handle, Win32.WM_APP_WAKE, 0, 0);
 
+    /// <summary>Перехватить мышь: сообщения продолжат приходить и вне окна.</summary>
+    public void CaptureMouse() => Win32.SetCapture(Handle);
+
+    public static void ReleaseMouse() => Win32.ReleaseCapture();
+
     /// <summary>
     /// Возвращает true, если точка (клиентские координаты) попадает в интерактивную
     /// область. Всё остальное отдаётся окнам под нами — курсор и клики проходят
