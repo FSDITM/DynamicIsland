@@ -59,6 +59,18 @@
             <Setter Property="Margin" Value="14,0,0,7"/>
         </Style>
 
+        <!--
+            Название настройки. Стиль именованный и назначается явно: подписи
+            создаются кодом, и неявный стиль TextBlock до них не доходит —
+            цвет оставался чёрным по умолчанию, то есть невидимым на карточке.
+        -->
+        <Style x:Key="RowLabel" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{StaticResource Fg}"/>
+            <Setter Property="FontSize" Value="14"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="TextWrapping" Value="Wrap"/>
+        </Style>
+
         <Style x:Key="RowHint" TargetType="TextBlock">
             <Setter Property="Foreground" Value="{StaticResource FgMuted}"/>
             <Setter Property="FontSize" Value="13"/>

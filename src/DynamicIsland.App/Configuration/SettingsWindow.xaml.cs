@@ -240,7 +240,7 @@ public partial class SettingsWindow : Window
                    "Лицензия CC BY-SA 4.0 — как у оригинала.",
             TextWrapping = TextWrapping.Wrap,
             Foreground = (Brush)FindResource("FgMuted"),
-            FontSize = 12.5,
+            FontSize = 13,
             Margin = new Thickness(16, 14, 16, 14),
             LineHeight = 19,
         };
@@ -268,7 +268,7 @@ public partial class SettingsWindow : Window
         var caption = new TextBlock
         {
             Foreground = (Brush)FindResource("FgMuted"),
-            FontSize = 11.5,
+            FontSize = 12,
             HorizontalAlignment = HorizontalAlignment.Center,
             Margin = new Thickness(0, 10, 0, 0),
         };
@@ -360,7 +360,7 @@ public partial class SettingsWindow : Window
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
         var text = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 16, 0) };
-        text.Children.Add(new TextBlock { Text = label, TextWrapping = TextWrapping.Wrap });
+        text.Children.Add(new TextBlock { Text = label, Style = (Style)FindResource("RowLabel") });
         if (hint is not null)
             text.Children.Add(new TextBlock { Text = hint, Style = (Style)FindResource("RowHint") });
 
@@ -388,7 +388,7 @@ public partial class SettingsWindow : Window
         var value = new TextBlock
         {
             Foreground = (Brush)FindResource("FgMuted"),
-            FontSize = 12.5,
+            FontSize = 13,
             MinWidth = 62,
             TextAlignment = TextAlignment.Right,
             Margin = new Thickness(12, 0, 0, 0),
@@ -525,7 +525,11 @@ public partial class SettingsWindow : Window
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
         var text = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 16, 0) };
-        text.Children.Add(new TextBlock { Text = "Показать или скрыть" });
+        text.Children.Add(new TextBlock
+        {
+            Text = "Показать или скрыть",
+            Style = (Style)FindResource("RowLabel"),
+        });
         text.Children.Add(status);
 
         Grid.SetColumn(text, 0);
@@ -544,7 +548,7 @@ public partial class SettingsWindow : Window
             Height = 132,
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
             Margin = new Thickness(16, 14, 16, 0),
-            FontSize = 12.5,
+            FontSize = 13,
         };
 
         void Commit()
@@ -592,7 +596,7 @@ public partial class SettingsWindow : Window
         {
             Text = value,
             Foreground = (Brush)FindResource("FgMuted"),
-            FontSize = 12.5,
+            FontSize = 13,
             TextWrapping = TextWrapping.Wrap,
             MaxWidth = 340,
             TextAlignment = TextAlignment.Right,
