@@ -29,6 +29,12 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- Rubik: вариативный шрифт для времени, даты и заряда.
+         SIL Open Font License, текст лицензии лежит рядом. -->
+    <None Include="Resources\Fonts\**" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="SkiaSharp" Version="4.151.1" />
     <PackageReference Include="SkiaSharp.Direct3D.Vortice" Version="4.151.1" />
     <PackageReference Include="Vortice.Direct3D12" Version="3.8.3" />

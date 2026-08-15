@@ -29,7 +29,11 @@ internal sealed class IslandContent : IDisposable
     private readonly SKPaint _text = new() { IsAntialias = true };
     private readonly SKPaint _image = new() { IsAntialias = true };
 
+    // Rubik — только для показаний: время, дата, заряд, тайминги на полосе.
     private readonly SKFont _fontClock;
+    private readonly SKFont _fontMeta;
+
+    // Название и исполнитель остаются на системном шрифте.
     private readonly SKFont _fontTitle;
     private readonly SKFont _fontSmall;
 
@@ -78,12 +82,18 @@ internal sealed class IslandContent : IDisposable
     {
         _settings = settings;
 
-        var ui = SKTypeface.FromFamilyName("Segoe UI", SKFontStyleWeight.Normal,
-            SKFontStyleWidth.Normal, SKFontStyleSlant.Upright) ?? SKTypeface.Default;
-        var uiBold = SKTypeface.FromFamilyName("Segoe UI", SKFontStyleWeight.SemiBold,
-            SKFontStyleWidth.Normal, SKFontStyleSlant.Upright) ?? ui;
+        var ui = FontLibrary.Fallback(400);
+        var uiBold = FontLibrary.Fallback(600);
 
-        _fontClock = new SKFont(uiBold, 15) { Subpixel = true, Edging = SKFontEdging.SubpixelAntialias };
+        // Часы — тот же Rubik, но с лёгким утолщением: время должно читаться
+        // как главное, а отдельного полужирного начертания взять неоткуда.
+        _fontClock = new SKFont(FontLibrary.Rubik, 15)
+        {
+            Subpixel = true,
+            Edging = SKFontEdging.SubpixelAntialias,
+            Embolden = true,
+        };
+        _fontMeta = new SKFont(FontLibrary.Rubik, 12) { Subpixel = true, Edging = SKFontEdging.SubpixelAntialias };
         _fontTitle = new SKFont(uiBold, 14) { Subpixel = true, Edging = SKFontEdging.SubpixelAntialias };
         _fontSmall = new SKFont(ui, 12) { Subpixel = true, Edging = SKFontEdging.SubpixelAntialias };
     }
@@ -161,7 +171,7 @@ internal sealed class IslandContent : IDisposable
             canvas.DrawText(ClockText(), rect.Left + pad, midY, SKTextAlign.Left, _fontClock, _text);
         }
 
-        _fontSmall.Size = 12f * scale;
+        _fontMeta.Size = 12f * scale;
 
         // Справа показываем самое актуальное: играющую музыку, иначе заряд,
         // иначе дату. Что именно доступно — решают настройки.
@@ -177,7 +187,7 @@ internal sealed class IslandContent : IDisposable
         {
             _text.Color = TextMuted.WithAlpha(a);
             canvas.DrawText(DateTime.Now.ToString("ddd, d MMM"), rect.Right - pad, midY,
-                SKTextAlign.Right, _fontSmall, _text);
+                SKTextAlign.Right, _fontMeta, _text);
         }
     }
 
@@ -194,7 +204,7 @@ internal sealed class IslandContent : IDisposable
         var a = (byte)(alpha * 255);
 
         // Верхняя строка: часы и дата слева, заряд справа.
-        _fontSmall.Size = 11.5f * scale;
+        _fontMeta.Size = 11.5f * scale;
         _text.Color = TextMuted.WithAlpha(a);
 
         var header = (_settings.ShowClock, _settings.ShowDate) switch
@@ -206,7 +216,7 @@ internal sealed class IslandContent : IDisposable
         };
         if (header.Length > 0)
             canvas.DrawText(header, rect.Left + pad, rect.Top + 22f * scale,
-                SKTextAlign.Left, _fontSmall, _text);
+                SKTextAlign.Left, _fontMeta, _text);
 
         if (_settings.ShowBattery)
             DrawBatteryLabel(canvas, rect.Right - pad, rect.Top + 22f * scale, scale, power, a);
@@ -266,14 +276,14 @@ internal sealed class IslandContent : IDisposable
         var a = (byte)(alpha * 255);
         var progress = ScrubProgress ?? media.Progress;
 
-        _fontSmall.Size = 11f * scale;
+        _fontMeta.Size = 11f * scale;
         var elapsed = FormatTime(ScrubProgress is { } s
             ? TimeSpan.FromSeconds(media.Duration.TotalSeconds * s)
             : media.EffectivePosition);
         var total = FormatTime(media.Duration);
 
-        var elapsedWidth = _fontSmall.MeasureText(elapsed);
-        var totalWidth = _fontSmall.MeasureText(total);
+        var elapsedWidth = _fontMeta.MeasureText(elapsed);
+        var totalWidth = _fontMeta.MeasureText(total);
 
         // Привязка к нижнему краю, а не к фиксированной высоте: раскрытый
         // размер настраивается, и полоса должна следовать за ним.
@@ -291,8 +301,8 @@ internal sealed class IslandContent : IDisposable
                                  trackRight + gap, centerY + 11f * scale);
 
         _text.Color = TextMuted.WithAlpha(a);
-        canvas.DrawText(elapsed, rect.Left + pad, centerY + 4f * scale, SKTextAlign.Left, _fontSmall, _text);
-        canvas.DrawText(total, rect.Right - pad, centerY + 4f * scale, SKTextAlign.Right, _fontSmall, _text);
+        canvas.DrawText(elapsed, rect.Left + pad, centerY + 4f * scale, SKTextAlign.Left, _fontMeta, _text);
+        canvas.DrawText(total, rect.Right - pad, centerY + 4f * scale, SKTextAlign.Right, _fontMeta, _text);
 
         var radius = thickness / 2f;
 
@@ -457,12 +467,12 @@ internal sealed class IslandContent : IDisposable
         var color = power.IsCharging ? Accent : TextMuted;
 
         _text.Color = color.WithAlpha(alpha);
-        canvas.DrawText(label, rightX, baselineY, SKTextAlign.Right, _fontSmall, _text);
+        canvas.DrawText(label, rightX, baselineY, SKTextAlign.Right, _fontMeta, _text);
 
         if (!power.IsCharging) return;
 
-        var boltSize = _fontSmall.Size * 0.85f;
-        var textWidth = _fontSmall.MeasureText(label);
+        var boltSize = _fontMeta.Size * 0.85f;
+        var textWidth = _fontMeta.MeasureText(label);
         var boltLeft = rightX - textWidth - 3f * scale - boltSize;
 
         _fill.Color = color.WithAlpha(alpha);
@@ -566,6 +576,7 @@ internal sealed class IslandContent : IDisposable
         _text.Dispose();
         _image.Dispose();
         _fontClock.Dispose();
+        _fontMeta.Dispose();
         _fontTitle.Dispose();
         _fontSmall.Dispose();
         _shadowFilter?.Dispose();
