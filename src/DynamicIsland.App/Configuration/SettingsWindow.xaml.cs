@@ -463,7 +463,8 @@ public partial class SettingsWindow : Window
             VerticalAlignment = VerticalAlignment.Center,
         };
 
-        var box = new TextBox { Text = ToHex(get()), Width = 110 };
+        // Ширины под девять знаков «#AARRGGBB»: при 110 последний символ обрезался.
+        var box = new TextBox { Text = ToHex(get()), Width = 136 };
 
         void Commit()
         {
@@ -679,6 +680,10 @@ internal static class SettingsPreview
                 Left = -30000,
                 Top = -30000,
                 ShowInTaskbar = false,
+
+                // Высоко, чтобы поместился весь раздел: то, что скрыто прокруткой,
+                // на снимке не проверить, а проверять надо всё.
+                Height = 1700,
             };
             window.Show();
 
@@ -688,9 +693,52 @@ internal static class SettingsPreview
                 window.UpdateLayout();
                 Pump();
 
-                var name = $"{section + 1:00}-{window.Nav.Items[section]}.png";
-                Save(window, Path.Combine(directory, name));
+                var name = window.Nav.Items[section]?.ToString() ?? section.ToString();
+
+                window.ContentScroll.ScrollToTop();
+                Pump();
+                Save(window, Path.Combine(directory, $"{section + 1:00}-{name}-верх.png"));
+
+                // Нижнюю часть раздела иначе не проверить: окно ограничено
+                // высотой экрана, а карточки уходят под прокрутку.
+                window.ContentScroll.ScrollToEnd();
+                Pump();
+                if (window.ContentScroll.VerticalOffset > 1)
+                    Save(window, Path.Combine(directory, $"{section + 1:00}-{name}-низ.png"));
+
+                // Раскрытый список живёт в Popup — это отдельное дерево, и
+                // наследование цвета туда доходит не всегда. Проверяем отдельно.
+                window.ContentScroll.ScrollToTop();
+                Pump();
+                if (FindDescendant<ComboBox>(window.ContentHost) is { } combo)
+                {
+                    combo.IsDropDownOpen = true;
+                    Pump();
+
+                    // Popup — отдельное окно, и снимок основного его не захватит.
+                    // Рисуем содержимое списка напрямую.
+                    if (FindDescendant<System.Windows.Controls.Primitives.Popup>(combo)
+                        is { Child: FrameworkElement child })
+                    {
+                        SaveElement(child, Path.Combine(directory, $"{section + 1:00}-{name}-список.png"));
+                    }
+
+                    combo.IsDropDownOpen = false;
+                    Pump();
+                }
             }
+
+            // Диалог выбора приложений — отдельное окно со своими стилями,
+            // проверяем и его.
+            var picker = RunningAppPicker.BuildForPreview();
+            picker.WindowStartupLocation = WindowStartupLocation.Manual;
+            picker.Left = -30000;
+            picker.Top = -30000;
+            picker.ShowInTaskbar = false;
+            picker.Show();
+            Pump();
+            Save(picker, Path.Combine(directory, "06-Выбор приложения.png"));
+            picker.Close();
 
             window.Close();
             System.Windows.Threading.Dispatcher.CurrentDispatcher.InvokeShutdown();
@@ -699,6 +747,35 @@ internal static class SettingsPreview
         thread.SetApartmentState(ApartmentState.STA);
         thread.Start();
         thread.Join(TimeSpan.FromSeconds(60));
+    }
+
+    /// <summary>Снимок отдельного элемента — например содержимого всплывающего списка.</summary>
+    private static void SaveElement(FrameworkElement element, string path)
+    {
+        var width = (int)Math.Ceiling(element.ActualWidth);
+        var height = (int)Math.Ceiling(element.ActualHeight);
+        if (width <= 0 || height <= 0) return;
+
+        var target = new RenderTargetBitmap(width, height, 96, 96, PixelFormats.Pbgra32);
+        target.Render(element);
+
+        var encoder = new PngBitmapEncoder();
+        encoder.Frames.Add(BitmapFrame.Create(target));
+
+        using var file = File.Create(path);
+        encoder.Save(file);
+    }
+
+    private static T? FindDescendant<T>(DependencyObject root) where T : DependencyObject
+    {
+        var count = System.Windows.Media.VisualTreeHelper.GetChildrenCount(root);
+        for (var i = 0; i < count; i++)
+        {
+            var child = System.Windows.Media.VisualTreeHelper.GetChild(root, i);
+            if (child is T found) return found;
+            if (FindDescendant<T>(child) is { } deeper) return deeper;
+        }
+        return null;
     }
 
     /// <summary>Прогоняет очередь диспетчера, чтобы разметка успела посчитаться.</summary>

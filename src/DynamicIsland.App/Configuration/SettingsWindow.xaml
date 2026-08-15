@@ -5,6 +5,8 @@
         Width="860" Height="660" MinWidth="760" MinHeight="560"
         WindowStartupLocation="CenterScreen"
         Background="#FF101014"
+        Foreground="#FFF2F2F5"
+        TextElement.Foreground="#FFF2F2F5"
         TextOptions.TextFormattingMode="Display"
         TextOptions.TextRenderingMode="ClearType"
         UseLayoutRounding="True"
@@ -14,6 +16,10 @@
         TextFormattingMode=Display, а не Ideal: Ideal не привязывает глифы
         к пиксельной сетке, и мелкий текст на обычном экране расплывается.
         Размеры шрифтов — целые числа по той же причине.
+
+        Foreground задан прямо на окне и наследуется вниз. Это страховка:
+        элементы, созданные кодом, неявный стиль TextBlock не подхватывают
+        и оставались чёрными на тёмном фоне.
     -->
     <Window.Resources>
 
@@ -406,7 +412,7 @@
         </Border>
 
         <!-- ================= Содержимое ================= -->
-        <ScrollViewer Grid.Column="1" VerticalScrollBarVisibility="Auto" Padding="0"
+        <ScrollViewer x:Name="ContentScroll" Grid.Column="1" VerticalScrollBarVisibility="Auto" Padding="0"
                       HorizontalScrollBarVisibility="Disabled">
             <StackPanel x:Name="ContentHost" Margin="32,26,26,32"/>
         </ScrollViewer>
