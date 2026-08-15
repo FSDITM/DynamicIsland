@@ -36,6 +36,9 @@ internal sealed class OverlayWindow : IDisposable
     public event Action? MouseLeft;
     public event Action<bool>? MouseButton;
     public event Action? RightClicked;
+
+    /// <summary>Захват мыши отобрали — незавершённое перетаскивание надо отменить.</summary>
+    public event Action? CaptureLost;
     public event Action<int>? MouseWheel;
     public event Action? Closed;
     public event Action? DisplayChanged;
@@ -159,6 +162,13 @@ internal sealed class OverlayWindow : IDisposable
                 _trackingMouse = false;
                 MouseInside = false;
                 MouseLeft?.Invoke();
+                return 0;
+
+            // Захват мыши могли отобрать (переключение окна, Alt+Tab, диалог).
+            // Без этого перетаскивание ползунка залипло бы, а вместе с ним
+            // залипло бы и удержание мыши на нашем окне.
+            case Win32.WM_CAPTURECHANGED:
+                CaptureLost?.Invoke();
                 return 0;
 
             case Win32.WM_LBUTTONDOWN: MouseButton?.Invoke(true); return 0;

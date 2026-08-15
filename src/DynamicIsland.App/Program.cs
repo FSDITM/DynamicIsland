@@ -93,9 +93,13 @@ internal sealed class IslandApp : IDisposable
 
     private bool _running = true;
     private bool _needsRedraw = true;
-    private bool _hovered;
     private bool _scrubbing;
     private bool _showHud;
+
+    // Курсор должен задержаться над островком, прежде чем тот раскроется.
+    private static readonly long DwellTicks = Stopwatch.Frequency * 220 / 1000;
+    private bool _cursorInside;
+    private long _cursorEnteredAt;
 
     private SKImage? _artwork;
     private int _artworkVersion;
@@ -129,6 +133,7 @@ internal sealed class IslandApp : IDisposable
 
     // Самопроверка
     private readonly double _selfTestSeconds;
+    private bool _selfTestExpanded;
     private double _worstFrameMs;
     private long _worstFrameIndex;
     private double _sumFrameMs;
@@ -156,6 +161,12 @@ internal sealed class IslandApp : IDisposable
         _window.MouseLeft += OnMouseLeft;
         _window.MouseButton += OnMouseButton;
         _window.RightClicked += ShowTrayMenu;
+        _window.CaptureLost += () =>
+        {
+            _scrubbing = false;
+            _content.ScrubProgress = null;
+            _needsRedraw = true;
+        };
         _window.TrayMessage += OnTrayMessage;
         _window.Woken += () => _needsRedraw = true;
         _window.Closed += () => _running = false;
@@ -313,44 +324,96 @@ internal sealed class IslandApp : IDisposable
     {
         // В самопроверке меряем анимацию, а не реакцию на чужие окна: иначе
         // результат зависит от того, что было развёрнуто на экране в момент запуска.
-        if (_selfTestSeconds > 0) return _hovered ? IslandMode.Expanded : IslandMode.Rest;
+        if (_selfTestSeconds > 0) return _selfTestExpanded ? IslandMode.Expanded : IslandMode.Rest;
 
         // В полноэкранном режиме молчим даже про новый трек — там играют или смотрят.
         if (_occlusion == ForegroundWatcher.Occlusion.Fullscreen) return IslandMode.Hidden;
         // Пока тянут ползунок, островок не сворачивается, даже если курсор
         // ушёл за его край.
-        if (_hovered || _scrubbing || IsPeeking) return IslandMode.Expanded;
+        if (HoverEngaged || _scrubbing || IsPeeking) return IslandMode.Expanded;
         if (_occlusion == ForegroundWatcher.Occlusion.Covered) return IslandMode.Notch;
         return IslandMode.Rest;
     }
 
+    /// <summary>Зона, попадание в которую начинает отсчёт до раскрытия.</summary>
+    private SKRect TriggerRect()
+    {
+        var rect = _island.GetRect(_gpu.Width, _window.Scale);
+        // У полоски своя высота в семь пикселей — в неё мышью не попасть,
+        // поэтому по вертикали зона чуть больше самой фигуры.
+        var marginY = (_island.Mode == IslandMode.Notch ? 10f : 6f) * _window.Scale;
+        rect.Inflate(6f * _window.Scale, marginY);
+        return rect;
+    }
+
+    /// <summary>Фигура островка — только здесь клики принадлежат нам.</summary>
+    private SKRect ShapeRect()
+    {
+        var rect = _island.GetRect(_gpu.Width, _window.Scale);
+        rect.Inflate(4f * _window.Scale, 4f * _window.Scale);
+        return rect;
+    }
+
+    /// <summary>
+    /// Ответ на WM_NCHITTEST.
+    ///
+    /// Клики забираем только когда островок уже раскрыт и курсор на его фигуре.
+    /// Всё остальное время окно прозрачно для мыши: раньше оно возвращало
+    /// HTCLIENT для раздутого прямоугольника, и нажатия в чужих окнах у верхнего
+    /// края экрана молча пропадали — окно их съедало, не забирая фокус.
+    ///
+    /// Само сообщение приходит и при HTTRANSPARENT, поэтому следить за курсором
+    /// это не мешает.
+    /// </summary>
     private bool HitTest(int clientX, int clientY)
     {
-        // В полноэкранном режиме окно полностью прозрачно для мыши.
-        if (_island.Mode == IslandMode.Hidden && _island.Visibility < 0.05f)
+        if (_island.Mode == IslandMode.Hidden)
         {
-            SetHovered(false);
+            UpdateCursorPresence(false);
             return false;
         }
 
-        var rect = _island.GetRect(_gpu.Width, _window.Scale);
+        UpdateCursorPresence(TriggerRect().Contains(clientX, clientY));
 
-        // В свёрнутом виде зона реакции выше самой полоски, иначе в неё
-        // невозможно попасть мышью.
-        var marginY = (_island.Mode == IslandMode.Notch ? 16f : 12f) * _window.Scale;
-        var marginX = 14f * _window.Scale;
-        rect.Inflate(marginX, marginY);
+        if (_scrubbing) return true;
 
-        var inside = rect.Contains(clientX, clientY);
-        SetHovered(inside);
-        return inside;
+        // Условие именно «пользователь навёл», а не «островок раскрыт»: при
+        // автопоказе нового трека он раскрывается сам, и брать на себя клики
+        // в это время нельзя — они принадлежат тому окну, где человек работает.
+        return HoverEngaged && ShapeRect().Contains(clientX, clientY);
     }
 
-    private void SetHovered(bool value)
+    /// <summary>
+    /// Курсор вошёл в зону или вышел из неё. Раскрытие происходит не сразу:
+    /// без задержки островок распахивался от любого движения мыши вдоль верха
+    /// экрана и закрывал собой чужие окна.
+    /// </summary>
+    private void UpdateCursorPresence(bool inside)
     {
-        if (_hovered == value) return;
-        _hovered = value;
+        if (inside == _cursorInside) return;
+
+        _cursorInside = inside;
+        _cursorEnteredAt = inside ? Stopwatch.GetTimestamp() : 0;
         _needsRedraw = true;
+    }
+
+    private bool HoverEngaged => _cursorInside &&
+        Stopwatch.GetTimestamp() - _cursorEnteredAt >= DwellTicks;
+
+    /// <summary>
+    /// Пока островок раскрыт, проверяем курсор сами: за пределами его фигуры
+    /// окно прозрачно для мыши и WM_MOUSELEAVE может не прийти.
+    /// </summary>
+    private void PollCursorWhileExpanded()
+    {
+        if (_scrubbing) return;
+        if (_island.Mode != IslandMode.Expanded && !_cursorInside) return;
+
+        Win32.GetCursorPos(out var screen);
+        var point = screen;
+        Win32.ScreenToClient(_window.Handle, ref point);
+
+        UpdateCursorPresence(TriggerRect().Contains(point.X, point.Y));
     }
 
     private void OnMouseLeft()
@@ -359,7 +422,7 @@ internal sealed class IslandApp : IDisposable
         // сворачиваться нельзя.
         if (_scrubbing) return;
 
-        SetHovered(false);
+        UpdateCursorPresence(false);
         _needsRedraw = true;
     }
 
@@ -459,11 +522,13 @@ internal sealed class IslandApp : IDisposable
                 if (testClock.Elapsed.TotalSeconds >= _selfTestSeconds) break;
                 if (testClock.Elapsed.TotalSeconds >= nextToggle)
                 {
-                    _hovered = !_hovered;
+                    _selfTestExpanded = !_selfTestExpanded;
                     nextToggle += 0.7;
                     _needsRedraw = true;
                 }
             }
+
+            PollCursorWhileExpanded();
 
             var mode = ResolveMode();
             if (mode != lastMode)
@@ -540,6 +605,13 @@ internal sealed class IslandApp : IDisposable
                 // на пониженной частоте.
                 OverlayWindow.WaitForInputOrHandles(empty, MusicFrameIntervalMs);
                 _needsRedraw = true;
+                last = Stopwatch.GetTimestamp();
+            }
+            else if (_cursorInside || _island.Mode == IslandMode.Expanded || _scrubbing)
+            {
+                // Курсор рядом или островок раскрыт: нужно вовремя заметить
+                // истечение задержки перед раскрытием и уход курсора.
+                OverlayWindow.WaitForInputOrHandles(empty, 100);
                 last = Stopwatch.GetTimestamp();
             }
             else
