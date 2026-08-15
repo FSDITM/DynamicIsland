@@ -91,10 +91,10 @@ internal sealed class OverlayWindow : IDisposable
     /// </summary>
     public void SetShape(int left, int top, int right, int bottom, int radius)
     {
-        // Перестраивать регион ради долей пикселя незачем — это вызов GDI.
-        if (Math.Abs(_region.L - left) < 2 && Math.Abs(_region.T - top) < 2 &&
-            Math.Abs(_region.R - right) < 2 && Math.Abs(_region.B - bottom) < 2)
-            return;
+        // Совпало точно — пересобирать нечего. Порога в несколько пикселей тут
+        // быть не должно: каждый лишний пиксель региона отбирает нажатия
+        // у окна под островком.
+        if (_region == (left, top, right, bottom)) return;
 
         _region = (left, top, right, bottom);
 

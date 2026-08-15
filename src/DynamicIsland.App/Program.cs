@@ -434,7 +434,9 @@ internal sealed class IslandApp : IDisposable
         // блокноту эта полоса экрана не нужна.
         if (_occlusion == ForegroundWatcher.Occlusion.Covered &&
             _settings.ShouldCollapseFor(_watcher.ForegroundProcess))
-            return IslandMode.Notch;
+            return _settings.CollapsedLook == CollapsedLook.Hidden
+                ? IslandMode.Hidden
+                : IslandMode.Notch;
 
         return IslandMode.Rest;
     }
@@ -455,10 +457,11 @@ internal sealed class IslandApp : IDisposable
 
         if (_island.Mode == IslandMode.Notch)
         {
-            // По толщине — сама полоска плюс небольшой запас: целиться в неё
-            // должно быть удобно. Клики при этом всё равно не пропадут: пока
-            // раскрытия не случилось, окно прозрачно для ввода.
-            var thickness = (_island.NotchSize.Y + 6f) * _window.Scale;
+            // Ровно по видимой полоске, без запаса вглубь экрана. Запас означал
+            // бы, что курсор, задержавшийся над вкладкой браузера под островком,
+            // раскрывает его — и раскрытый островок накрывает собой цель.
+            // Попасть в саму полоску легко: она у кромки, курсор там упирается.
+            var thickness = _island.NotchSize.Y * _window.Scale;
             return atBottom
                 ? new SKRect(rect.Left, _gpu.Height - thickness, rect.Right, _gpu.Height)
                 : new SKRect(rect.Left, 0, rect.Right, thickness);
@@ -581,19 +584,40 @@ internal sealed class IslandApp : IDisposable
         var scale = _window.Scale;
         var rect = _island.GetRect(_gpu.Width, _gpu.Height, scale);
 
-        // Запас ровно под текущую тень: в свёрнутом виде она слабая, и раздувать
-        // окно на всякий случай нельзя — это снова была бы зона, перекрывающая
-        // чужие окна.
-        var blur = _island.Mode == IslandMode.Expanded ? 26f : 9f;
-        var margin = (blur * 1.6f + 4f) * scale;
+        // Окно скрыто — region в один пиксель. Ни одного нажатия перехватить
+        // уже нечем.
+        if (_island.Visibility < 0.02f)
+        {
+            _window.SetShape(0, 0, 1, 1, 0);
+            return;
+        }
 
-        // Границы округляем наружу до сетки: во время анимации размер меняется
+        // Запас берётся только под тень, и только там, где она есть.
+        //
+        // Ввод сквозь такое окно не проходит в принципе: с WS_EX_NOREDIRECTIONBITMAP
+        // и DirectComposition система не видит альфу наших пикселей и не может
+        // решить, что нажатие чужое. Ни WS_EX_TRANSPARENT, ни ответ HTTRANSPARENT
+        // тут не работают — единственная настоящая граница это регион окна.
+        // Поэтому каждый лишний пиксель региона превращается в мёртвую зону
+        // поверх чужого окна, и в свёрнутом виде запаса нет вовсе.
+        var margin = _island.Mode switch
+        {
+            IslandMode.Notch => 0f,
+            IslandMode.Expanded => (26f * 1.6f + 4f) * scale,
+            _ => (9f * 1.6f + 4f) * scale,
+        };
+
+        // Во время анимации границы округляются наружу до сетки: размер меняется
         // каждый кадр, а пересоздание региона — это вызов GDI и обновление окна
-        // в DWM. С шагом сетки регион перестраивается несколько раз за переход
-        // вместо шестидесяти раз в секунду, и при этом всегда не меньше островка.
-        const int grid = 32;
-        static int Down(float v) => (int)MathF.Floor(v / grid) * grid;
-        static int Up(float v) => (int)MathF.Ceiling(v / grid) * grid;
+        // в DWM, и делать это шестьдесят раз в секунду расточительно.
+        //
+        // Но как только движение закончилось, регион строится точно по фигуре.
+        // Округление в покое обходилось дорого: полоска высотой семь пикселей
+        // превращалась в мёртвую зону высотой тридцать два, и эти лишние
+        // двадцать пять пикселей отбирали нажатия у вкладок браузера под ней.
+        var grid = _island.IsAnimating ? 16 : 1;
+        int Down(float v) => (int)MathF.Floor(v / grid) * grid;
+        int Up(float v) => (int)MathF.Ceiling(v / grid) * grid;
 
         var left = Math.Max(0, Down(rect.Left - margin));
         var top = Math.Max(0, Down(rect.Top - margin));

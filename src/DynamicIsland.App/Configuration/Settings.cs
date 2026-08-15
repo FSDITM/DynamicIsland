@@ -8,6 +8,16 @@ namespace DynamicIsland.Configuration;
 
 internal enum ScreenAnchor { Top, Bottom }
 
+/// <summary>Во что превращается островок, когда мешает чужому окну.</summary>
+internal enum CollapsedLook
+{
+    /// <summary>Тонкая полоска у края экрана. Занимает несколько пикселей.</summary>
+    Notch,
+
+    /// <summary>Полностью исчезает. Ни одного пикселя, перекрывающего чужое окно.</summary>
+    Hidden,
+}
+
 /// <summary>Когда островок сворачивается в полоску под чужим окном.</summary>
 internal enum CollapseMode
 {
@@ -73,6 +83,7 @@ internal sealed class Settings : INotifyPropertyChanged
     private int _hoverDelayMs = 220;
     private int _hoverOverWindowDelayMs = 400;
     private CollapseMode _collapseMode = CollapseMode.ListedApps;
+    private CollapsedLook _collapsedLook = CollapsedLook.Notch;
     private bool _hideInFullscreen = true;
 
     /// <summary>
@@ -93,6 +104,9 @@ internal sealed class Settings : INotifyPropertyChanged
     public int HoverOverWindowDelayMs { get => _hoverOverWindowDelayMs; set => Set(ref _hoverOverWindowDelayMs, Math.Clamp(value, 0, 3000)); }
     [JsonConverter(typeof(JsonStringEnumConverter))]
     public CollapseMode CollapseMode { get => _collapseMode; set => Set(ref _collapseMode, value); }
+
+    [JsonConverter(typeof(JsonStringEnumConverter))]
+    public CollapsedLook CollapsedLook { get => _collapsedLook; set => Set(ref _collapsedLook, value); }
 
     public string[] CollapseApps
     {

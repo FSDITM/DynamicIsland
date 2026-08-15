@@ -129,16 +129,20 @@ internal sealed class IslandContent : IDisposable
     private void DrawShell(SKCanvas canvas, SKRect rect, float radius, float scale,
                            IslandMode mode, float alpha)
     {
-        var strength = _settings.ShadowStrength;
-        var shadowRadius = (mode == IslandMode.Expanded ? 26f : 9f) * strength * scale;
-        EnsureShadowFilter(shadowRadius);
-
         using var round = new SKRoundRect(rect, radius);
 
-        var shadowAlpha = alpha * (mode == IslandMode.Expanded ? 160 : 95) * Math.Min(1f, strength);
-        _shadow.Color = new SKColor(0, 0, 0, (byte)Math.Clamp(shadowAlpha, 0f, 255f));
-        _shadow.ImageFilter = _shadowFilter;
-        canvas.DrawRoundRect(round, _shadow);
+        // В свёрнутом виде тени нет: окно там обрезано ровно по полоске, чтобы
+        // не отбирать нажатия у чужого окна, и тень всё равно была бы срезана.
+        if (mode != IslandMode.Notch)
+        {
+            var strength = _settings.ShadowStrength;
+            EnsureShadowFilter((mode == IslandMode.Expanded ? 26f : 9f) * strength * scale);
+
+            var shadowAlpha = alpha * (mode == IslandMode.Expanded ? 160 : 95) * Math.Min(1f, strength);
+            _shadow.Color = new SKColor(0, 0, 0, (byte)Math.Clamp(shadowAlpha, 0f, 255f));
+            _shadow.ImageFilter = _shadowFilter;
+            canvas.DrawRoundRect(round, _shadow);
+        }
 
         _fill.ImageFilter = null;
         _fill.Color = Background.WithAlpha((byte)(alpha * 255));
