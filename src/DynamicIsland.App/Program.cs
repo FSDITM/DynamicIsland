@@ -98,6 +98,7 @@ internal sealed class IslandApp : IDisposable
 
     // Курсор должен задержаться над островком, прежде чем тот раскроется.
     private static readonly long DwellTicks = Stopwatch.Frequency * 220 / 1000;
+    private static readonly long DwellOverWindowTicks = Stopwatch.Frequency * 400 / 1000;
     private bool _cursorInside;
     private long _cursorEnteredAt;
 
@@ -335,16 +336,36 @@ internal sealed class IslandApp : IDisposable
         return IslandMode.Rest;
     }
 
-    /// <summary>Зона, попадание в которую начинает отсчёт до раскрытия.</summary>
+    /// <summary>
+    /// Зона, попадание в которую начинает отсчёт до раскрытия.
+    ///
+    /// В свёрнутом состоянии под островком чужое окно, и раскрываться от
+    /// простого движения мыши нельзя: он накроет собой то, с чем человек
+    /// работает, и заберёт нажатие. Поэтому там зона — узкая полоска у самой
+    /// кромки экрана: чтобы попасть в неё, надо намеренно упереть курсор в верх.
+    /// </summary>
     private SKRect TriggerRect()
     {
         var rect = _island.GetRect(_gpu.Width, _window.Scale);
-        // У полоски своя высота в семь пикселей — в неё мышью не попасть,
-        // поэтому по вертикали зона чуть больше самой фигуры.
-        var marginY = (_island.Mode == IslandMode.Notch ? 10f : 6f) * _window.Scale;
-        rect.Inflate(6f * _window.Scale, marginY);
+
+        if (_island.Mode == IslandMode.Notch)
+            return new SKRect(rect.Left, 0, rect.Right, 4f * _window.Scale);
+
+        rect.Inflate(6f * _window.Scale, 6f * _window.Scale);
+
+        // Тянем зону до самой кромки экрана. Иначе на границе получается
+        // качели: курсор у верха выпадает из зоны раскрытого островка, тот
+        // сворачивается, курсор снова попадает в полоску — и так по кругу.
+        rect.Top = 0;
         return rect;
     }
+
+    /// <summary>
+    /// Сколько курсор должен пробыть в зоне до раскрытия. Поверх чужого окна —
+    /// дольше: это должно быть решением, а не случайностью.
+    /// </summary>
+    private long RequiredDwellTicks =>
+        _island.Mode == IslandMode.Notch ? DwellOverWindowTicks : DwellTicks;
 
     /// <summary>Фигура островка — только здесь клики принадлежат нам.</summary>
     private SKRect ShapeRect()
@@ -398,7 +419,7 @@ internal sealed class IslandApp : IDisposable
     }
 
     private bool HoverEngaged => _cursorInside &&
-        Stopwatch.GetTimestamp() - _cursorEnteredAt >= DwellTicks;
+        Stopwatch.GetTimestamp() - _cursorEnteredAt >= RequiredDwellTicks;
 
     /// <summary>
     /// Пока островок раскрыт, проверяем курсор сами: за пределами его фигуры
