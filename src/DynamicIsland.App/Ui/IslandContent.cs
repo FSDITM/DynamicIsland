@@ -82,20 +82,15 @@ internal sealed class IslandContent : IDisposable
     {
         _settings = settings;
 
-        var ui = FontLibrary.Fallback(400);
-        var uiBold = FontLibrary.Fallback(600);
+        // Весь островок набран одним шрифтом — так это и выглядит на маках.
+        // Смесь двух гарнитур в одном элементе читается как случайность.
+        var regular = FontLibrary.FromFamilyOrDefault(settings.FontFamily, bold: false);
+        var bold = FontLibrary.FromFamilyOrDefault(settings.FontFamily, bold: true);
 
-        // Часы — тот же Rubik, но с лёгким утолщением: время должно читаться
-        // как главное, а отдельного полужирного начертания взять неоткуда.
-        _fontClock = new SKFont(FontLibrary.Rubik, 15)
-        {
-            Subpixel = true,
-            Edging = SKFontEdging.SubpixelAntialias,
-            Embolden = true,
-        };
-        _fontMeta = new SKFont(FontLibrary.Rubik, 12) { Subpixel = true, Edging = SKFontEdging.SubpixelAntialias };
-        _fontTitle = new SKFont(uiBold, 14) { Subpixel = true, Edging = SKFontEdging.SubpixelAntialias };
-        _fontSmall = new SKFont(ui, 12) { Subpixel = true, Edging = SKFontEdging.SubpixelAntialias };
+        _fontClock = new SKFont(bold, 15) { Subpixel = true, Edging = SKFontEdging.SubpixelAntialias };
+        _fontMeta = new SKFont(regular, 12) { Subpixel = true, Edging = SKFontEdging.SubpixelAntialias };
+        _fontTitle = new SKFont(bold, 14) { Subpixel = true, Edging = SKFontEdging.SubpixelAntialias };
+        _fontSmall = new SKFont(regular, 12) { Subpixel = true, Edging = SKFontEdging.SubpixelAntialias };
     }
 
     public void Draw(SKCanvas canvas, Island island, float stageWidth, float stageHeight, float scale,

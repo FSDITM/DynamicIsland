@@ -147,6 +147,7 @@ internal sealed class Settings : INotifyPropertyChanged
     private bool _showBattery = true;
     private bool _showEqualizer = true;
     private bool _use24Hour = true;
+    private string _fontFamily = "";
     private bool _showMetrics;
     private bool _runOnStartup;
     private string _hotkey = "Ctrl+Alt+D";
@@ -156,6 +157,14 @@ internal sealed class Settings : INotifyPropertyChanged
     public bool ShowBattery { get => _showBattery; set => Set(ref _showBattery, value); }
     public bool ShowEqualizer { get => _showEqualizer; set => Set(ref _showEqualizer, value); }
     public bool Use24HourClock { get => _use24Hour; set => Set(ref _use24Hour, value); }
+
+    /// <summary>
+    /// Имя семейства шрифта из системы. Пусто — вшитый Inter.
+    /// Существует, чтобы можно было поставить свой шрифт: например SF Pro,
+    /// если он у вас установлен. Вшить его в приложение нельзя — лицензия
+    /// Apple разрешает использовать SF Pro только при разработке под Apple.
+    /// </summary>
+    public string FontFamily { get => _fontFamily; set => Set(ref _fontFamily, value ?? ""); }
     public bool ShowMetrics { get => _showMetrics; set => Set(ref _showMetrics, value); }
     public bool RunOnStartup { get => _runOnStartup; set => Set(ref _runOnStartup, value); }
 
