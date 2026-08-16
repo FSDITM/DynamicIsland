@@ -199,6 +199,8 @@
 
         <!-- ============ Поле ввода ============ -->
         <Style TargetType="TextBox">
+            <Setter Property="HorizontalContentAlignment" Value="Left"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
             <Setter Property="Background" Value="#FF26262E"/>
             <Setter Property="Foreground" Value="{StaticResource Fg}"/>
             <Setter Property="CaretBrush" Value="{StaticResource Fg}"/>

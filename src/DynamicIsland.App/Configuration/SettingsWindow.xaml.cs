@@ -73,12 +73,31 @@ public partial class SettingsWindow : Window
         }
     }
 
+    /// <summary>
+    /// Берёт из .ico самый крупный кадр.
+    ///
+    /// BitmapImage отдаёт из многокадрового .ico первый попавшийся — обычно
+    /// 16×16. Растянутый до 38 точек, да ещё на экране со 150%, он
+    /// превращался в кашу из пикселей.
+    /// </summary>
     private void LoadLogo()
     {
         try
         {
-            if (File.Exists(TrayIcon.IconPath))
-                AppLogo.Source = new BitmapImage(new Uri(TrayIcon.IconPath));
+            if (!File.Exists(TrayIcon.IconPath)) return;
+
+            using var stream = File.OpenRead(TrayIcon.IconPath);
+            var decoder = BitmapDecoder.Create(stream,
+                BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad);
+
+            BitmapFrame? best = null;
+            foreach (var frame in decoder.Frames)
+                if (best is null || frame.PixelWidth > best.PixelWidth) best = frame;
+
+            AppLogo.Source = best;
+
+            // Кадр крупнее места, куда его ставят, поэтому важно, как он ужимается.
+            RenderOptions.SetBitmapScalingMode(AppLogo, BitmapScalingMode.HighQuality);
         }
         catch (Exception ex)
         {
@@ -104,6 +123,29 @@ public partial class SettingsWindow : Window
 
     /// <summary>Какое состояние островка сейчас показывает и настраивает раздел «Вид».</summary>
     private int _shownState = 1;
+
+    /// <summary>
+    /// Принудительный масштаб для снимка. В обычной работе null — берётся
+    /// настоящий масштаб экрана.
+    /// </summary>
+    internal static double? DpiOverrideForPreview { get; set; }
+
+    /// <summary>
+    /// Режим отрисовки текста зависит от масштаба экрана.
+    ///
+    /// Display прибивает глифы к пиксельной сетке: на 100% это спасает мелкий
+    /// текст от размытия, но на 150% делает его ступенчатым. Ideal наоборот —
+    /// размывает на 100% и рисует гладко там, где пикселей хватает.
+    /// Одного правильного значения нет, поэтому выбираем по месту.
+    /// </summary>
+    protected override void OnSourceInitialized(EventArgs e)
+    {
+        base.OnSourceInitialized(e);
+
+        var scale = DpiOverrideForPreview ?? VisualTreeHelper.GetDpi(this).DpiScaleX;
+        TextOptions.SetTextFormattingMode(this,
+            scale >= 1.25 ? TextFormattingMode.Ideal : TextFormattingMode.Display);
+    }
 
     /// <summary>Переключает состояние для снимка — все три надо проверить глазами.</summary>
     internal void ShowStateForPreview(int state)
@@ -868,9 +910,12 @@ public partial class SettingsWindow : Window
 /// </summary>
 internal static class SettingsPreview
 {
-    public static void Render(Settings settings, string directory)
+    public static void Render(Settings settings, string directory, double scale = 1.0)
     {
         Directory.CreateDirectory(directory);
+
+        PreviewScale = scale;
+        SettingsWindow.DpiOverrideForPreview = scale;
 
         var thread = new Thread(() =>
         {
@@ -1011,15 +1056,24 @@ internal static class SettingsPreview
     /// Двойной масштаб здесь вреден: мелкий текст на нём выглядит чётким
     /// всегда, и проблема с читаемостью на обычном экране остаётся невидимой.
     /// </summary>
+    /// <summary>
+    /// Масштаб экрана для снимка. Единица — экран со 100%, полтора — со 150%.
+    /// Проверять надо в том же масштабе, в котором смотрит пользователь:
+    /// текст на 100% и на 150% рисуется по-разному, и правка под один масштаб
+    /// легко ломает другой.
+    /// </summary>
+    public static double PreviewScale { get; set; } = 1.0;
+
     private static void Save(Window window, string path)
     {
-        const double scale = 1.0;
+        var scale = PreviewScale;
         var width = (int)(window.ActualWidth * scale);
         var height = (int)(window.ActualHeight * scale);
         if (width <= 0 || height <= 0) return;
 
         var target = new RenderTargetBitmap(width, height, 96 * scale, 96 * scale, PixelFormats.Pbgra32);
         target.Render(window);
+
 
         var encoder = new PngBitmapEncoder();
         encoder.Frames.Add(BitmapFrame.Create(target));

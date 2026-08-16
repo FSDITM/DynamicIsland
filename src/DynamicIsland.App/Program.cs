@@ -61,7 +61,14 @@ internal static class Program
         {
             try
             {
-                Configuration.SettingsPreview.Render(Configuration.Settings.Load(), args[previewIdx + 1]);
+                var previewScale = 1.0;
+                if (previewIdx + 2 < args.Length) double.TryParse(args[previewIdx + 2],
+                    System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out previewScale);
+                if (previewScale <= 0) previewScale = 1.0;
+
+                Configuration.SettingsPreview.Render(
+                    Configuration.Settings.Load(), args[previewIdx + 1], previewScale);
                 Log.Write("Окно настроек отрисовано в " + args[previewIdx + 1]);
                 return 0;
             }
