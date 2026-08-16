@@ -40,6 +40,15 @@ internal static class SettingsWindowHost
         {
             try
             {
+                // Обработчики WPF вызываются из оконной процедуры, и исключение,
+                // вышедшее за её границу, Windows считает фатальным сбоем
+                // в callback — процесс умирает мгновенно, снаружи не поймать.
+                Dispatcher.CurrentDispatcher.UnhandledException += (_, args) =>
+                {
+                    Log.Write("Ошибка в окне настроек: " + args.Exception);
+                    args.Handled = true;
+                };
+
                 var window = new SettingsWindow(settings);
 
                 lock (Gate)

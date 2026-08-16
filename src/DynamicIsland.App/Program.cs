@@ -79,6 +79,13 @@ internal static class Program
             }
         }
 
+        if (args.Contains("--testmenu"))
+        {
+            var result = Configuration.TrayMenu.SelfTest();
+            Log.Write("ПРОВЕРКА МЕНЮ: " + result);
+            return result.StartsWith("ИСКЛЮЧЕНИЕ") ? 1 : 0;
+        }
+
         var selfTest = 0.0;
         var idx = Array.IndexOf(args, "--selftest");
         if (idx >= 0 && idx + 1 < args.Length) double.TryParse(args[idx + 1], out selfTest);

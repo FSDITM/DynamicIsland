@@ -53,6 +53,16 @@ internal static class TrayMenu
         {
             try
             {
+                // Обработчики WPF вызываются из оконной процедуры. Исключение,
+                // вышедшее за её границу, Windows считает фатальным
+                // (STATUS_FATAL_USER_CALLBACK_EXCEPTION) и убивает процесс
+                // мгновенно — снаружи его не поймать. Перехватываем здесь.
+                Dispatcher.CurrentDispatcher.UnhandledException += (_, args) =>
+                {
+                    Log.Write("Ошибка в меню трея: " + args.Exception);
+                    args.Handled = true;
+                };
+
                 var window = Build(items);
                 _open = window;
                 window.Closed += (_, _) =>
@@ -96,12 +106,132 @@ internal static class TrayMenu
         return window;
     }
 
+    /// <summary>
+    /// Прогоняет нажатие по пункту меню так же, как это делает мышь.
+    ///
+    /// Падение при выборе пункта воспроизводится только через настоящий путь
+    /// доставки события: обработчик вызывается из оконной процедуры, и всё
+    /// дело было именно в этом. Проверять такое на словах нельзя.
+    /// </summary>
+    public static string SelfTest()
+    {
+        var report = "не запускалось";
+
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                Dispatcher.CurrentDispatcher.UnhandledException += (_, args) =>
+                {
+                    report = "ИСКЛЮЧЕНИЕ В ОБРАБОТЧИКЕ: " + args.Exception;
+                    args.Handled = true;
+                };
+
+                var fired = false;
+                // Проверяемый пункт идёт первым: поиск берёт первую строку меню.
+                var window = Build(
+                [
+                    new TrayMenuItem("Переключатель", () => fired = true, Checked: false),
+                    TrayMenuItem.Separator,
+                    new TrayMenuItem("Настройки…"),
+                ]);
+
+                window.WindowStartupLocation = WindowStartupLocation.Manual;
+                window.Left = -30000;
+                window.Top = -30000;
+                window.ShowInTaskbar = false;
+                window.Show();
+                PumpQueue();
+
+                // Ищем строку меню и посылаем ей то же событие, что и мышь.
+                var row = FindRow(window);
+                if (row is null) { report = "строка меню не найдена"; return; }
+
+                row.RaiseEvent(new System.Windows.Input.MouseButtonEventArgs(
+                    System.Windows.Input.Mouse.PrimaryDevice, 0,
+                    System.Windows.Input.MouseButton.Left)
+                {
+                    RoutedEvent = UIElement.MouseLeftButtonUpEvent,
+                });
+
+                // Действие отложено на диспетчер, поэтому ждём его, а не
+                // проверяем сразу: в живом приложении очередь крутится всегда,
+                // а здесь её надо прокачать вручную.
+                for (var i = 0; i < 40 && !fired; i++)
+                {
+                    PumpQueue();
+                    Thread.Sleep(25);
+                }
+
+                if (!report.StartsWith("ИСКЛЮЧЕНИЕ"))
+                    report = fired ? "нажатие прошло, действие выполнено" : "нажатие прошло, действие НЕ выполнено";
+
+                try { window.Close(); } catch { /* уже закрыто обработчиком */ }
+            }
+            catch (Exception ex)
+            {
+                report = "ИСКЛЮЧЕНИЕ: " + ex;
+            }
+        });
+
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        thread.Join(TimeSpan.FromSeconds(20));
+        return report;
+    }
+
+    private static Border? FindRow(DependencyObject root)
+    {
+        var count = VisualTreeHelper.GetChildrenCount(root);
+        for (var i = 0; i < count; i++)
+        {
+            var child = VisualTreeHelper.GetChild(root, i);
+
+            // Строка меню — это Border с Grid внутри и обработчиком нажатия.
+            if (child is Border { Child: Grid } border && border.Cursor == System.Windows.Input.Cursors.Hand)
+                return border;
+
+            if (FindRow(child) is { } found) return found;
+        }
+        return null;
+    }
+
+    private static void PumpQueue()
+    {
+        var frame = new DispatcherFrame();
+        Dispatcher.CurrentDispatcher.BeginInvoke(DispatcherPriority.ContextIdle,
+            new Action(() => frame.Continue = false));
+        Dispatcher.PushFrame(frame);
+    }
+
     public static void CloseIfOpen()
     {
         var window = _open;
         try { window?.Dispatcher.Invoke(window.Close, DispatcherPriority.Normal); }
         catch { /* поток мог уже завершиться */ }
     }
+
+    /// <summary>
+    /// Закрывает окно один раз и вне обработчика ввода.
+    ///
+    /// Закрытие приходит с трёх сторон — клик по пункту, потеря фокуса, Escape —
+    /// и легко случается повторно уже во время закрытия: снятие фокуса при
+    /// разрушении окна снова поднимает Deactivated.
+    /// </summary>
+    private static void CloseSafely(Window window)
+    {
+        if (Closing.Contains(window)) return;
+        Closing.Add(window);
+
+        window.Dispatcher.BeginInvoke(DispatcherPriority.Background, () =>
+        {
+            try { window.Close(); }
+            catch (Exception ex) { Log.Write("Закрытие меню: " + ex.Message); }
+            finally { Closing.Remove(window); }
+        });
+    }
+
+    private static readonly HashSet<Window> Closing = [];
 
     private static Window Build(IReadOnlyList<TrayMenuItem> items)
     {
@@ -158,8 +288,8 @@ internal static class TrayMenu
         window.Content = panel;
 
         // Меню закрывается, как только внимание ушло, — как системное.
-        window.Deactivated += (_, _) => window.Close();
-        window.KeyDown += (_, e) => { if (e.Key == System.Windows.Input.Key.Escape) window.Close(); };
+        window.Deactivated += (_, _) => CloseSafely(window);
+        window.KeyDown += (_, e) => { if (e.Key == System.Windows.Input.Key.Escape) CloseSafely(window); };
 
         window.SourceInitialized += (_, _) => PlaceAtCursor(window);
         window.ContentRendered += (_, _) => { PlaceAtCursor(window); window.Activate(); };
@@ -217,8 +347,21 @@ internal static class TrayMenu
         cell.MouseLeave += (_, _) => cell.Background = Brushes.Transparent;
         cell.MouseLeftButtonUp += (_, _) =>
         {
-            window.Close();
-            item.Action?.Invoke();
+            var action = item.Action;
+            var text = item.Text;
+
+            // Ни закрывать окно, ни выполнять действие прямо здесь нельзя:
+            // обработчик вызван из оконной процедуры, а разрушение окна внутри
+            // неё Windows считает фатальным сбоем в callback и убивает процесс.
+            // Откладываем — обработчик успевает завершиться и выйти из процедуры.
+            window.Dispatcher.BeginInvoke(DispatcherPriority.Background, () =>
+            {
+                CloseSafely(window);
+
+                // Пункт меню не должен ронять приложение, что бы в нём ни случилось.
+                try { action?.Invoke(); }
+                catch (Exception ex) { Log.Write($"Пункт меню «{text}»: {ex}"); }
+            });
         };
 
         return cell;
