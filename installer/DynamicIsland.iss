@@ -9,7 +9,16 @@
 ; Собрать:  ISCC.exe installer\DynamicIsland.iss
 
 #define AppName        "DynamicIsland"
-#define AppVersion     "1.0.0"
+
+; Номер версии не пишется здесь руками. Он берётся из собранного exe, а туда
+; попадает из <Version> в src\DynamicIsland.App\DynamicIsland.App.csproj —
+; так установщик физически не может разъехаться с тем, что внутри него лежит.
+; Список выпусков — в CHANGELOG.md.
+#define PublishedExe   SourcePath + "..\publish\DynamicIsland.exe"
+#ifndef AppVersion
+  #define AppVersion   GetStringFileInfo(PublishedExe, "ProductVersion")
+#endif
+
 #define AppPublisher   "FSDITM"
 #define AppUrl         "https://github.com/FSDITM/DynamicIsland"
 #define AppExe         "DynamicIsland.exe"

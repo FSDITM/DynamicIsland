@@ -406,6 +406,13 @@ internal static class Win32
     [DllImport("user32.dll")]
     public static extern bool IsZoomed(nint hWnd);
 
+    // Окно, скрытое композитором (другой рабочий стол, спящее UWP-приложение),
+    // для IsWindowVisible остаётся видимым. Правду знает только DWM.
+    public const uint DWMWA_CLOAKED = 14;
+
+    [DllImport("dwmapi.dll")]
+    public static extern int DwmGetWindowAttribute(nint hWnd, uint attribute, out int value, int size);
+
     [DllImport("shell32.dll")]
     public static extern int SHQueryUserNotificationState(out int state);
 

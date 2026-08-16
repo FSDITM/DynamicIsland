@@ -18,6 +18,20 @@
     <RootNamespace>DynamicIsland</RootNamespace>
     <ApplicationIcon>Resources\AppIcon.ico</ApplicationIcon>
 
+    <!-- Единственное место, где живёт номер версии. Отсюда его берут окно
+         «О программе», свойства exe и установщик. Порядок выпуска описан
+         в CHANGELOG.md. -->
+    <Version>1.0.1</Version>
+
+    <!-- Иначе .NET дописывает в ProductVersion хеш коммита («1.0.1+1b1d52…»),
+         а установщик берёт номер версии именно оттуда. -->
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+
+    <Company>FSDITM</Company>
+    <Product>DynamicIsland</Product>
+    <Description>Динамический островок для Windows</Description>
+    <Copyright>© 2026 FSDITM</Copyright>
+
     <!-- WPF нужен только окну настроек. Оверлей рисуется своим GPU-ядром,
          и эти сборки грузятся лишь при первом открытии настроек. -->
     <UseWPF>true</UseWPF>
@@ -48,5 +62,13 @@
     <PackageReference Include="Vortice.Direct3D12" Version="3.8.3" />
     <PackageReference Include="Vortice.DirectComposition" Version="3.8.3" />
   </ItemGroup>
+
+  <!-- Пакет SkiaSharp кладёт рядом с нативной библиотекой её отладочные
+       символы: 85 МБ на 12 МБ кода. Пользователю они не нужны, а установщик
+       из-за них растёт вдвое. Удаляем после публикации, а не вручную перед
+       сборкой установщика, — иначе однажды забудешь. -->
+  <Target Name="RemoveSkiaNativeSymbols" AfterTargets="Publish">
+    <Delete Files="$(PublishDir)libSkiaSharp.pdb" />
+  </Target>
 
 </Project>

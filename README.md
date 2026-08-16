@@ -123,6 +123,7 @@ dotnet run --project src/DynamicIsland.App -c Release
 | `--testmenu` | прогоняет нажатие по пункту меню тем же путём, что и мышью |
 | `--icon <ico> [png]` | пересобирает логотип приложения |
 | `--banner <png>` | рисует обложку для этого README |
+| `--watchtest <секунд>` | пишет в лог все события смены окна и решение по каждому |
 
 </details>
 
@@ -138,7 +139,9 @@ dotnet publish src/DynamicIsland.App -c Release -r win-x64 --self-contained true
 ISCC.exe installer/DynamicIsland.iss
 ```
 
-Готовый установщик появится в `dist/`.
+Готовый установщик появится в `dist/`. Номер версии он берёт из собранного
+`.exe`, а тот — из `<Version>` в `DynamicIsland.App.csproj`: разъехаться они
+не могут. Список выпусков — в [CHANGELOG.md](CHANGELOG.md).
 
 </details>
 

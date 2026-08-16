@@ -20,6 +20,18 @@ internal static class Program
         // координаты и всё поедет на мониторах с масштабированием.
         Win32.SetProcessDpiAwarenessContext(Win32.DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
 
+        // --watchtest N: диагностика слежения за окнами. Проверяется до мьютекса —
+        // её смысл в том, чтобы запускаться рядом с работающим приложением.
+        var watchIdx = Array.IndexOf(args, "--watchtest");
+        if (watchIdx >= 0)
+        {
+            var watchSeconds = 20.0;
+            if (watchIdx + 1 < args.Length) double.TryParse(args[watchIdx + 1],
+                System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out watchSeconds);
+            return Platform.WatchTest.Run(watchSeconds);
+        }
+
         // Второй экземпляр не нужен: две иконки в трее и два островка поверх друг друга.
         using var mutex = new Mutex(true, @"Local\DynamicIsland.SingleInstance", out var isFirst);
         if (!isFirst)
@@ -799,6 +811,7 @@ internal sealed class IslandApp : IDisposable
 
             ApplyPendingSettings();
             PollCursor();
+            _watcher.Poll();
             ApplyInputTransparency();
             ApplyWindowShape();
 
