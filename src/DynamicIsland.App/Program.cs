@@ -115,11 +115,6 @@ internal static class Log
 
 internal sealed class IslandApp : IDisposable
 {
-    private const int MenuSettings = 1;
-    private const int MenuAutostart = 2;
-    private const int MenuMetrics = 3;
-    private const int MenuExit = 5;
-
     private readonly Settings _settings = Settings.Load();
 
     private readonly OverlayWindow _window = new();
@@ -731,33 +726,26 @@ internal sealed class IslandApp : IDisposable
         if (mouseMessage is Win32.WM_RBUTTONUP or Win32.WM_LBUTTONUP) ShowTrayMenu();
     }
 
-    private void ShowTrayMenu()
-    {
-        var items = new List<(int, string, bool)>
-        {
-            (MenuSettings, "Настройки…", false),
-            (MenuAutostart, "Запускать при входе в систему", _settings.RunOnStartup),
-            (MenuMetrics, "Показывать метрики", _settings.ShowMetrics),
-            (0, "", false),
-            (MenuExit, "Выход", false),
-        };
-
-        switch (TrayIcon.ShowMenu(_window.Handle, items))
-        {
-            case MenuSettings:
-                SettingsWindowHost.Show(_settings);
-                break;
-            case MenuAutostart:
-                _settings.RunOnStartup = !_settings.RunOnStartup;
-                break;
-            case MenuMetrics:
-                _settings.ShowMetrics = !_settings.ShowMetrics;
-                break;
-            case MenuExit:
-                _running = false;
-                break;
-        }
-    }
+    /// <summary>
+    /// Меню в трее. Рисуется самим приложением, а не системой: системное всегда
+    /// светлое и рядом с тёмным островком смотрится чужеродно.
+    ///
+    /// Пункты выполняются на потоке меню, поэтому после каждого будим цикл
+    /// отрисовки — иначе он продолжит спать и не заметит изменения.
+    /// </summary>
+    private void ShowTrayMenu() => TrayMenu.Show(
+    [
+        new TrayMenuItem("Настройки…", () => SettingsWindowHost.Show(_settings)),
+        TrayMenuItem.Separator,
+        new TrayMenuItem("Запускать при входе в систему",
+            () => { _settings.RunOnStartup = !_settings.RunOnStartup; _window.Wake(); },
+            Checked: _settings.RunOnStartup),
+        new TrayMenuItem("Показывать метрики",
+            () => { _settings.ShowMetrics = !_settings.ShowMetrics; _window.Wake(); },
+            Checked: _settings.ShowMetrics),
+        TrayMenuItem.Separator,
+        new TrayMenuItem("Выход", () => { _running = false; _window.Wake(); }, Danger: true),
+    ]);
 
     private void RenderLoop()
     {
@@ -964,6 +952,7 @@ internal sealed class IslandApp : IDisposable
     public void Dispose()
     {
         SettingsWindowHost.CloseIfOpen();
+        TrayMenu.CloseIfOpen();
 
         _settings.PropertyChanged -= OnSettingChanged;
         _settings.Save();

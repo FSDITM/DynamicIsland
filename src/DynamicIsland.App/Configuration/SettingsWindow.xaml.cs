@@ -1002,6 +1002,16 @@ internal static class SettingsPreview
             Save(picker, Path.Combine(directory, "06-Выбор приложения.png"));
             picker.Close();
 
+            // Меню в трее рисует само приложение, значит и проверять его надо
+            // снимком, а не на глаз.
+            var menu = TrayMenu.BuildForPreview();
+            menu.Left = -30000;
+            menu.Top = -30000;
+            menu.Show();
+            Pump();
+            Save(menu, Path.Combine(directory, "07-Меню в трее.png"));
+            menu.Close();
+
             window.Close();
             System.Windows.Threading.Dispatcher.CurrentDispatcher.InvokeShutdown();
         });
