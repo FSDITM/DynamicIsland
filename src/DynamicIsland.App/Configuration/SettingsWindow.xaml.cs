@@ -303,16 +303,18 @@ public partial class SettingsWindow : Window
         InfoRow(card, "Версия", AppInfo.Version);
         InfoRow(card, "Отрисовка", "Direct3D 12 + DirectComposition, Skia на GPU");
         InfoRow(card, "Шрифт", "Inter (SIL Open Font License)");
+        InfoRow(card, "Лицензия", "MIT");
         InfoRow(card, "Файл настроек", Settings.FilePath);
 
         var origin = Card(host, "Происхождение");
         var text = new TextBlock
         {
-            Text = "Переработанная версия DynamicWin Флориана Бутца. Исходники оригинала были " +
-                   "удалены из репозитория в октябре 2025 года и восстановлены из истории git.\n\n" +
-                   "Ядро отрисовки написано заново: окно размером с островок вместо полноэкранного, " +
-                   "кадр не покидает видеопамять, а в покое поток спит и кадры не рисуются вовсе.\n\n" +
-                   "Лицензия CC BY-SA 4.0 — как у оригинала.",
+            Text = "Идея и первая реализация — DynamicWin Флориана Бутца. Исходники оригинала " +
+                   "были удалены из репозитория в октябре 2025 года.\n\n" +
+                   "Этот островок написан заново: окно размером с саму фигуру вместо " +
+                   "полноэкранного, кадр не покидает видеопамять, а в покое поток спит и кадры " +
+                   "не рисуются вовсе.\n\n" +
+                   "Шрифт Inter — Расмус Андерссон, SIL Open Font License.",
             TextWrapping = TextWrapping.Wrap,
             Foreground = (Brush)FindResource("FgMuted"),
             FontSize = 13,

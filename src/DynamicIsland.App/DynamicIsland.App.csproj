@@ -27,6 +27,10 @@
     <ServerGarbageCollection>false</ServerGarbageCollection>
     <ConcurrentGarbageCollection>false</ConcurrentGarbageCollection>
     <TieredPGO>true</TieredPGO>
+
+    <!-- Переводы служебных сообщений .NET на 13 языков тянут в сборку 8 МБ.
+         Интерфейс у приложения свой, эти ресурсы не используются. -->
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
   </PropertyGroup>
 
   <ItemGroup>
