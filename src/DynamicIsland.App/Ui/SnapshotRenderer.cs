@@ -67,6 +67,66 @@ internal static class SnapshotRenderer
                 art, power, scale, IslandButton.PlayPause);
     }
 
+    /// <summary>
+    /// Обложка для README: настоящий островок, отрисованный крупно тем же кодом,
+    /// что рисует его на экране. Не коллаж и не макет — то, что видит человек.
+    /// </summary>
+    public static void RenderBanner(string path, int width = 1280, int height = 440)
+    {
+        var info = new SKImageInfo(width, height, SKColorType.Bgra8888, SKAlphaType.Premul);
+        using var surface = SKSurface.Create(info);
+        var canvas = surface.Canvas;
+
+        // Фон: тёмный вертикальный градиент.
+        using (var backdrop = new SKPaint())
+        {
+            backdrop.Shader = SKShader.CreateLinearGradient(
+                new SKPoint(0, 0), new SKPoint(0, height),
+                [new SKColor(0x16, 0x17, 0x20), new SKColor(0x08, 0x08, 0x0C)],
+                [0f, 1f], SKShaderTileMode.Clamp);
+            canvas.DrawRect(SKRect.Create(0, 0, width, height), backdrop);
+        }
+
+        // Свечение за островком — оно и создаёт ощущение, что он поверх экрана.
+        using (var glow = new SKPaint())
+        {
+            glow.Shader = SKShader.CreateRadialGradient(
+                new SKPoint(width / 2f, height * 0.42f), width * 0.42f,
+                [new SKColor(0x4A, 0x7C, 0xFF, 70), new SKColor(0x4A, 0x7C, 0xFF, 0)],
+                [0f, 1f], SKShaderTileMode.Clamp);
+            canvas.DrawRect(SKRect.Create(0, 0, width, height), glow);
+        }
+
+        var settings = new Configuration.Settings();
+        var island = new Island(settings);
+        island.SetMode(IslandMode.Expanded);
+        for (var i = 0; i < 600; i++) island.Update(1f / 120f);
+
+        using var content = new IslandContent(settings);
+        using var art = MakeFakeArtwork();
+
+        var media = new MediaSnapshot(true, true, "Bohemian Rhapsody", "Queen", "spotify",
+            TimeSpan.FromSeconds(82), TimeSpan.FromSeconds(355), 0, true);
+        var power = new PowerSnapshot(87, false, true);
+
+        // Островок рисуется крупно и по центру: настройки задают его размер
+        // в логических пикселях, а масштаб переводит их в размер обложки.
+        const float scale = 1.7f;
+        var islandWidth = settings.ExpandedWidth * scale;
+        var islandHeight = settings.ExpandedHeight * scale;
+
+        var saved = canvas.Save();
+        canvas.Translate((width - islandWidth) / 2f - (width - islandWidth) / 2f,
+                         height / 2f - islandHeight / 2f - settings.TopOffset * scale);
+        content.Draw(canvas, island, width, height, scale, media, art, power);
+        canvas.RestoreToCount(saved);
+
+        using var image = surface.Snapshot();
+        using var data = image.Encode(SKEncodedImageFormat.Png, 100);
+        using var file = File.Create(path);
+        data.SaveTo(file);
+    }
+
     private static void Render(string path, IslandMode mode, MediaSnapshot media,
                                SKImage? artwork, PowerSnapshot power, float scale,
                                IslandButton hovered = IslandButton.None, float phase = 0f)

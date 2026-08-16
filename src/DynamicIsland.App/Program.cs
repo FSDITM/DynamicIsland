@@ -86,6 +86,23 @@ internal static class Program
             return result.StartsWith("ИСКЛЮЧЕНИЕ") ? 1 : 0;
         }
 
+        // --banner <png>: обложка для README.
+        var bannerIdx = Array.IndexOf(args, "--banner");
+        if (bannerIdx >= 0 && bannerIdx + 1 < args.Length)
+        {
+            try
+            {
+                Ui.SnapshotRenderer.RenderBanner(args[bannerIdx + 1]);
+                Log.Write("Обложка отрисована: " + args[bannerIdx + 1]);
+                return 0;
+            }
+            catch (Exception ex)
+            {
+                Log.Write("Обложка не отрисовалась: " + ex);
+                return 1;
+            }
+        }
+
         var selfTest = 0.0;
         var idx = Array.IndexOf(args, "--selftest");
         if (idx >= 0 && idx + 1 < args.Length) double.TryParse(args[idx + 1], out selfTest);
