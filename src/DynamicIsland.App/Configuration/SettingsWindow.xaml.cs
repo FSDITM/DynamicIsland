@@ -102,24 +102,57 @@ public partial class SettingsWindow : Window
 
     // ==================== Разделы ====================
 
+    /// <summary>Какое состояние островка сейчас показывает и настраивает раздел «Вид».</summary>
+    private int _shownState = 1;
+
+    /// <summary>Переключает состояние для снимка — все три надо проверить глазами.</summary>
+    internal void ShowStateForPreview(int state)
+    {
+        _shownState = state;
+        OnSectionChanged(this, null!);
+    }
+
     private void BuildAppearance(Panel host)
     {
+        // Переключатель состояний вместо шести ползунков подряд: раньше было
+        // непонятно, какой из них на что влияет, и увидеть результат можно было
+        // только уйдя из окна. Теперь выбираешь состояние — видишь его и правишь
+        // только его размеры.
+        host.Children.Add(BuildStateSelector());
         host.Children.Add(BuildPreview());
 
-        var size = Card(host, "Размеры");
-        SliderRow(size, "Ширина в покое", 120, 700, 5,
-            () => _settings.RestWidth, v => _settings.RestWidth = v, "{0:0} px");
-        SliderRow(size, "Высота в покое", 16, 120, 1,
-            () => _settings.RestHeight, v => _settings.RestHeight = v, "{0:0} px");
-        SliderRow(size, "Ширина раскрытого", 260, 900, 5,
-            () => _settings.ExpandedWidth, v => _settings.ExpandedWidth = v, "{0:0} px");
-        SliderRow(size, "Высота раскрытого", 80, 400, 2,
-            () => _settings.ExpandedHeight, v => _settings.ExpandedHeight = v, "{0:0} px");
-        SliderRow(size, "Ширина полоски", 60, 600, 5,
-            () => _settings.NotchWidth, v => _settings.NotchWidth = v, "{0:0} px");
-        SliderRow(size, "Толщина полоски", 2, 40, 1,
-            () => _settings.NotchHeight, v => _settings.NotchHeight = v, "{0:0} px",
-            "Эти пиксели перекрывают окно под островком — чем тоньше, тем меньше мешает.");
+        var size = Card(host, "Размер " + _shownState switch
+        {
+            0 => "полоски",
+            2 => "раскрытого",
+            _ => "в покое",
+        });
+
+        switch (_shownState)
+        {
+            case 0:
+                SliderRow(size, "Ширина", 60, 600, 5,
+                    () => _settings.NotchWidth, v => _settings.NotchWidth = v, "{0:0} px");
+                SliderRow(size, "Толщина", 2, 40, 1,
+                    () => _settings.NotchHeight, v => _settings.NotchHeight = v, "{0:0} px",
+                    "Эти пиксели перекрывают окно под островком — чем тоньше, тем меньше мешает.");
+                break;
+
+            case 2:
+                SliderRow(size, "Ширина", 260, 900, 5,
+                    () => _settings.ExpandedWidth, v => _settings.ExpandedWidth = v, "{0:0} px");
+                SliderRow(size, "Высота", 80, 400, 2,
+                    () => _settings.ExpandedHeight, v => _settings.ExpandedHeight = v, "{0:0} px",
+                    "Сюда помещается обложка, название трека и полоса перемотки.");
+                break;
+
+            default:
+                SliderRow(size, "Ширина", 120, 700, 5,
+                    () => _settings.RestWidth, v => _settings.RestWidth = v, "{0:0} px");
+                SliderRow(size, "Высота", 16, 120, 1,
+                    () => _settings.RestHeight, v => _settings.RestHeight = v, "{0:0} px");
+                break;
+        }
 
         var shape = Card(host, "Форма и цвет");
         SliderRow(shape, "Скругление углов", 0, 60, 1,
@@ -249,6 +282,59 @@ public partial class SettingsWindow : Window
 
     // ==================== Живой предпросмотр ====================
 
+    /// <summary>Переключатель состояний островка — он же выбирает, что настраивать.</summary>
+    private UIElement BuildStateSelector()
+    {
+        string[] names = ["Полоска", "В покое", "Раскрытый"];
+
+        var grid = new Grid();
+        for (var i = 0; i < names.Length; i++)
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+        for (var i = 0; i < names.Length; i++)
+        {
+            var index = i;
+            var selected = index == _shownState;
+
+            var label = new TextBlock
+            {
+                Text = names[i],
+                HorizontalAlignment = HorizontalAlignment.Center,
+                Foreground = (Brush)FindResource(selected ? "Fg" : "FgMuted"),
+                FontSize = 14,
+                FontWeight = selected ? FontWeights.SemiBold : FontWeights.Normal,
+            };
+
+            var cell = new Border
+            {
+                Background = selected ? (Brush)FindResource("Accent") : Brushes.Transparent,
+                CornerRadius = new CornerRadius(7),
+                Padding = new Thickness(0, 8, 0, 8),
+                Margin = new Thickness(3),
+                Cursor = System.Windows.Input.Cursors.Hand,
+                Child = label,
+            };
+
+            cell.MouseLeftButtonUp += (_, _) =>
+            {
+                if (_shownState == index) return;
+                _shownState = index;
+                OnSectionChanged(this, null!);
+            };
+
+            Grid.SetColumn(cell, index);
+            grid.Children.Add(cell);
+        }
+
+        return new Border
+        {
+            Background = new SolidColorBrush(Color.FromRgb(0x22, 0x22, 0x2A)),
+            CornerRadius = new CornerRadius(10),
+            Child = grid,
+            Margin = new Thickness(0, 0, 0, 18),
+        };
+    }
+
     /// <summary>
     /// Показывает островок на макете экрана. Настройка размера и цвета вслепую,
     /// с перебежками к настоящему островку и обратно, — худшее, что можно
@@ -291,25 +377,33 @@ public partial class SettingsWindow : Window
             const double virtualScreenWidth = 900.0;
             var scale = screenWidth / virtualScreenWidth;
 
-            island.Width = Math.Max(8, _settings.RestWidth * scale);
-            island.Height = Math.Max(3, _settings.RestHeight * scale);
+            var (logicalWidth, logicalHeight) = _shownState switch
+            {
+                0 => (_settings.NotchWidth, _settings.NotchHeight),
+                2 => (_settings.ExpandedWidth, _settings.ExpandedHeight),
+                _ => (_settings.RestWidth, _settings.RestHeight),
+            };
+
+            island.Width = Math.Max(8, logicalWidth * scale);
+            island.Height = Math.Max(3, logicalHeight * scale);
             island.CornerRadius = new CornerRadius(
                 Math.Min(island.Height / 2, _settings.CornerRadius * scale));
             island.Background = new SolidColorBrush(FromArgb(_settings.BackgroundColor))
             {
                 Opacity = _settings.Opacity,
             };
+            island.Child = MockContent(_shownState, island.Height);
 
+            // В свёрнутом виде островок жмётся к кромке, в остальных отступает.
+            var offset = _shownState == 0 ? 0 : _settings.TopOffset * scale;
             var top = _settings.Anchor == ScreenAnchor.Bottom
-                ? screenHeight - _settings.TopOffset * scale - island.Height
-                : _settings.TopOffset * scale;
+                ? screenHeight - offset - island.Height
+                : offset;
 
             Canvas.SetTop(island, top);
             Canvas.SetLeft(island, (screenWidth - island.Width) / 2 + _settings.HorizontalOffset * scale);
 
-            caption.Text = $"в покое {_settings.RestWidth:0}×{_settings.RestHeight:0}, " +
-                           $"раскрытый {_settings.ExpandedWidth:0}×{_settings.ExpandedHeight:0}, " +
-                           $"полоска {_settings.NotchWidth:0}×{_settings.NotchHeight:0}";
+            caption.Text = $"{logicalWidth:0} × {logicalHeight:0} логических пикселей";
         }
 
         Refresh();
@@ -319,6 +413,114 @@ public partial class SettingsWindow : Window
         {
             Margin = new Thickness(0, 0, 0, 22),
             Children = { screen, caption },
+        };
+    }
+
+    /// <summary>
+    /// Схематичное содержимое островка для предпросмотра.
+    ///
+    /// Именно схема, а не настоящий текст: в этом масштабе буквы вышли бы
+    /// высотой в семь пикселей и превратились бы в грязь. Блоки же сразу
+    /// показывают, что и где помещается.
+    /// </summary>
+    private UIElement? MockContent(int state, double islandHeight)
+    {
+        if (state == 0 || islandHeight < 10) return null;
+
+        var accent = new SolidColorBrush(FromArgb(_settings.AccentColor));
+        var bright = new SolidColorBrush(Color.FromRgb(0xE8, 0xE8, 0xEE));
+        var dim = new SolidColorBrush(Color.FromRgb(0x77, 0x77, 0x84));
+
+        static Border Block(Brush brush, double w, double h, double radius = 2) => new()
+        {
+            Width = w,
+            Height = h,
+            Background = brush,
+            CornerRadius = new CornerRadius(radius),
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+
+        if (state == 1)
+        {
+            // В покое: часы слева, заряд справа.
+            var row = new Grid { Margin = new Thickness(islandHeight * 0.42, 0, islandHeight * 0.42, 0) };
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+            var clock = Block(bright, islandHeight * 1.35, islandHeight * 0.30);
+            var battery = Block(dim, islandHeight * 0.85, islandHeight * 0.26);
+            Grid.SetColumn(clock, 0);
+            Grid.SetColumn(battery, 2);
+            row.Children.Add(clock);
+            row.Children.Add(battery);
+            return row;
+        }
+
+        // Раскрытый: обложка, две строки текста, три кнопки, полоса перемотки.
+        var pad = islandHeight * 0.12;
+        var artSize = islandHeight * 0.48;
+
+        var art = new Border
+        {
+            Width = artSize,
+            Height = artSize,
+            Background = new LinearGradientBrush(
+                Color.FromRgb(0xFF, 0x5E, 0x62), Color.FromRgb(0xFF, 0xC3, 0x71), 45),
+            CornerRadius = new CornerRadius(artSize * 0.16),
+            VerticalAlignment = VerticalAlignment.Top,
+        };
+
+        var lines = new StackPanel { Margin = new Thickness(pad, artSize * 0.12, 0, 0) };
+        lines.Children.Add(Block(bright, islandHeight * 0.95, islandHeight * 0.085));
+        lines.Children.Add(new Border { Height = pad * 0.5 });
+        lines.Children.Add(Block(dim, islandHeight * 0.6, islandHeight * 0.07));
+
+        var controls = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            VerticalAlignment = VerticalAlignment.Top,
+            Margin = new Thickness(0, artSize * 0.16, 0, 0),
+        };
+        for (var i = 0; i < 3; i++)
+        {
+            controls.Children.Add(Block(bright, islandHeight * 0.1, islandHeight * 0.1, islandHeight * 0.05));
+            if (i < 2) controls.Children.Add(new Border { Width = pad * 0.8 });
+        }
+
+        var top = new Grid();
+        top.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        top.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        top.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        Grid.SetColumn(art, 0);
+        Grid.SetColumn(lines, 1);
+        Grid.SetColumn(controls, 2);
+        top.Children.Add(art);
+        top.Children.Add(lines);
+        top.Children.Add(controls);
+
+        // Полоса перемотки: заполненная часть — доля ширины, а не число пикселей,
+        // иначе при узком островке она закрывала бы всю дорожку.
+        var thickness = islandHeight * 0.035;
+        var corner = new CornerRadius(thickness / 2);
+
+        var seek = new Grid { Margin = new Thickness(0, pad, 0, 0) };
+        seek.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(35, GridUnitType.Star) });
+        seek.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(65, GridUnitType.Star) });
+
+        var track = new Border { Height = thickness, Background = dim, CornerRadius = corner };
+        Grid.SetColumnSpan(track, 2);
+
+        var filled = new Border { Height = thickness, Background = accent, CornerRadius = corner };
+        Grid.SetColumn(filled, 0);
+
+        seek.Children.Add(track);
+        seek.Children.Add(filled);
+
+        return new StackPanel
+        {
+            Margin = new Thickness(pad * 1.4, pad * 1.2, pad * 1.4, pad * 1.2),
+            Children = { top, seek },
         };
     }
 
@@ -698,6 +900,21 @@ internal static class SettingsPreview
                 window.ContentScroll.ScrollToTop();
                 Pump();
                 Save(window, Path.Combine(directory, $"{section + 1:00}-{name}-верх.png"));
+
+                // У раздела «Вид» три состояния островка, и каждое рисуется
+                // по-своему — снимок одного ничего не говорит про остальные.
+                if (section == 0)
+                {
+                    foreach (var (state, label) in new[] { (0, "полоска"), (2, "раскрытый") })
+                    {
+                        window.ShowStateForPreview(state);
+                        window.ContentScroll.ScrollToTop();
+                        Pump();
+                        Save(window, Path.Combine(directory, $"01-Вид-{label}.png"));
+                    }
+                    window.ShowStateForPreview(1);
+                    Pump();
+                }
 
                 // Нижнюю часть раздела иначе не проверить: окно ограничено
                 // высотой экрана, а карточки уходят под прокрутку.
