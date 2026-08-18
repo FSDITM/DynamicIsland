@@ -47,6 +47,7 @@ internal sealed class ForegroundWatcher : IDisposable
     private readonly Lock _gate = new();
 
     private RECT _islandScreenRect;
+    private nint _islandMonitor;
     private nint _selfWindow;
 
     // Смена окна приходит всплеском из нескольких событий подряд. Частоту
@@ -131,6 +132,14 @@ internal sealed class ForegroundWatcher : IDisposable
         {
             _islandScreenRect = screenRect;
             _selfWindow = selfWindow;
+
+            // Монитор островка нужен, чтобы не прятаться из-за полноэкранного
+            // окна на соседнем экране. Центр зоны всегда внутри монитора.
+            _islandMonitor = Win32.MonitorFromPoint(new POINT
+            {
+                X = (screenRect.Left + screenRect.Right) / 2,
+                Y = (screenRect.Top + screenRect.Bottom) / 2,
+            }, Win32.MONITOR_DEFAULTTONEAREST);
         }
         Reevaluate(force: true);
     }
@@ -246,8 +255,12 @@ internal sealed class ForegroundWatcher : IDisposable
         ForegroundProcess = process;
 
         // Игры и полноэкранное видео Windows сообщает сама — это надёжнее,
-        // чем сравнивать прямоугольники.
-        if (Win32.SHQueryUserNotificationState(out var notifyState) == 0 &&
+        // чем сравнивать прямоугольники. Но сообщает на всю систему сразу,
+        // без указания экрана, поэтому верим этому только когда активное окно
+        // на том же мониторе, где островок: иначе игра на одном экране гасила
+        // бы островок на другом.
+        if (OnIslandMonitor(fg) &&
+            Win32.SHQueryUserNotificationState(out var notifyState) == 0 &&
             notifyState is Win32.QUNS_RUNNING_D3D_FULL_SCREEN or Win32.QUNS_PRESENTATION_MODE)
             return Occlusion.Fullscreen;
 
@@ -281,7 +294,7 @@ internal sealed class ForegroundWatcher : IDisposable
         // (F11 в браузере, игра в окне без рамки). Развёрнутое окно так считать
         // нельзя: под ним островок должен становиться полоской, а не исчезать, —
         // а на экране со скрытой панелью задач оно занимает тот же прямоугольник.
-        if (!Win32.IsZoomed(window))
+        if (!Win32.IsZoomed(window) && OnIslandMonitor(window))
         {
             var monitor = Win32.MonitorFromWindow(window, Win32.MONITOR_DEFAULTTONEAREST);
             var mi = new MONITORINFO { cbSize = (uint)System.Runtime.InteropServices.Marshal.SizeOf<MONITORINFO>() };
@@ -305,6 +318,16 @@ internal sealed class ForegroundWatcher : IDisposable
     private static readonly string[] ShellProcesses =
         ["startmenuexperiencehost", "searchhost", "searchui", "searchapp",
          "shellexperiencehost", "textinputhost"];
+
+    /// <summary>
+    /// Окно на том же экране, где живёт островок?
+    ///
+    /// Пока монитор неизвестен (зона ещё не задана) считаем, что да, — иначе
+    /// на старте островок ни разу не спрятался бы под полноэкранным окном.
+    /// </summary>
+    private bool OnIslandMonitor(nint window) =>
+        _islandMonitor == 0 ||
+        Win32.MonitorFromWindow(window, Win32.MONITOR_DEFAULTTONEAREST) == _islandMonitor;
 
     /// <summary>Скрыто композитором: другой рабочий стол или спящее приложение.</summary>
     private static bool IsCloaked(nint window) =>

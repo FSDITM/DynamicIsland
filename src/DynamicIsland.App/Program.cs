@@ -333,7 +333,11 @@ internal sealed class IslandApp : IDisposable
     private void ApplyStageBounds()
     {
         var info = CurrentMonitor();
-        var scale = _window.Scale;
+
+        // Масштаб берём у ЦЕЛЕВОГО монитора, а не у того, где окно стоит сейчас.
+        // При переезде с экрана 125% на экран 150% сцена иначе считается по
+        // старому масштабу и один кадр выглядит съехавшей.
+        var scale = Win32.ScaleForMonitor(info, _window.Scale);
 
         var w = (int)MathF.Round(StageLogicalWidth * scale);
         var h = (int)MathF.Round(StageLogicalHeight * scale);

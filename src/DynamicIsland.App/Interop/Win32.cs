@@ -416,8 +416,43 @@ internal static class Win32
     [DllImport("shell32.dll")]
     public static extern int SHQueryUserNotificationState(out int state);
 
-    // QUNS_*: 2 = полноэкранное D3D-приложение, 3 = презентация, 4 = «не беспокоить»
-    public const int QUNS_BUSY = 1;
-    public const int QUNS_RUNNING_D3D_FULL_SCREEN = 2;
-    public const int QUNS_PRESENTATION_MODE = 3;
+    // QUERY_USER_NOTIFICATION_STATE. Значения ровно как в заголовках Windows.
+    //
+    // Здесь они были смещены на единицу, и это стоило исчезнувшего островка:
+    // QUNS_BUSY система возвращает в том числе при подключении второго монитора
+    // («работает полноэкранное приложение либо включены настройки презентации»),
+    // а код принимал двойку за полноэкранный D3D и прятал островок на всех экранах.
+    public const int QUNS_NOT_PRESENT = 1;
+    public const int QUNS_BUSY = 2;
+    public const int QUNS_RUNNING_D3D_FULL_SCREEN = 3;
+    public const int QUNS_PRESENTATION_MODE = 4;
+    public const int QUNS_ACCEPTS_NOTIFICATIONS = 5;
+    public const int QUNS_QUIET_TIME = 6;
+    public const int QUNS_APP = 7;
+
+    // --- DPI конкретного монитора ---
+    public const int MDT_EFFECTIVE_DPI = 0;
+
+    [DllImport("shcore.dll")]
+    public static extern int GetDpiForMonitor(nint monitor, int dpiType, out uint dpiX, out uint dpiY);
+
+    /// <summary>Хэндл монитора по его прямоугольнику — через центр, он всегда внутри.</summary>
+    public static nint MonitorFromInfo(in MONITORINFO info) => MonitorFromPoint(new POINT
+    {
+        X = info.rcMonitor.Left + info.rcMonitor.Width / 2,
+        Y = info.rcMonitor.Top + info.rcMonitor.Height / 2,
+    }, MONITOR_DEFAULTTONEAREST);
+
+    /// <summary>
+    /// Масштаб именно этого монитора. Нужен, когда островок переезжает на экран
+    /// с другим масштабом: считать размер по масштабу прежнего экрана нельзя.
+    /// </summary>
+    public static float ScaleForMonitor(in MONITORINFO info, float fallback)
+    {
+        var monitor = MonitorFromInfo(info);
+        if (monitor != 0 && GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, out var dpiX, out _) == 0 && dpiX > 0)
+            return dpiX / 96f;
+
+        return fallback;
+    }
 }
