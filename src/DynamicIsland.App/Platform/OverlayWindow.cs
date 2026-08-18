@@ -96,10 +96,13 @@ internal sealed class OverlayWindow : IDisposable
         // у окна под островком.
         if (_region == (left, top, right, bottom)) return;
 
-        _region = (left, top, right, bottom);
-
         var rgn = Win32.CreateRoundRectRgn(left, top, right, bottom, radius, radius);
+
+        // Кэш обновляем только после удачи. Иначе отказ GDI навсегда развёл бы
+        // кэш с настоящим регионом: следующий такой же запрос отсеялся бы
+        // как «уже применён».
         if (rgn == 0) return;
+        _region = (left, top, right, bottom);
 
         // Регион переходит во владение системы — удалять его нельзя.
         Win32.SetWindowRgn(Handle, rgn, false);

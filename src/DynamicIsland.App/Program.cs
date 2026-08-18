@@ -309,8 +309,13 @@ internal sealed class IslandApp : IDisposable
     private MONITORINFO CurrentMonitor()
     {
         var monitors = Win32.GetMonitors();
-        if (monitors.Count > 0 && _settings.MonitorIndex < monitors.Count)
-            return monitors[_settings.MonitorIndex];
+
+        // Индекс подрезаем, а не уходим в запасной путь: окно настроек
+        // показывает ровно так же подрезанный пункт, и раньше эти двое
+        // расходились — интерфейс говорил одно, островок уезжал на монитор
+        // под курсором.
+        if (monitors.Count > 0)
+            return monitors[Math.Clamp(_settings.MonitorIndex, 0, monitors.Count - 1)];
 
         Win32.GetCursorPos(out var cursor);
         var handle = Win32.MonitorFromPoint(cursor, Win32.MONITOR_DEFAULTTOPRIMARY);
@@ -421,9 +426,17 @@ internal sealed class IslandApp : IDisposable
     private void UpdateWatcherRect()
     {
         var scale = _window.Scale;
+
+        // Зона считается по тем же слагаемым, что и фигура островка: раньше
+        // здесь терялись край экрана и смещение по горизонтали, и наблюдатель
+        // следил за полосой, где островка нет.
         var w = _island.RestSize.X * scale;
         var h = (_island.RestSize.Y + _settings.TopOffset) * scale;
-        var rect = new SKRect((_gpu.Width - w) / 2f, 0, (_gpu.Width + w) / 2f, h);
+        var left = (_gpu.Width - w) / 2f + _settings.HorizontalOffset * scale;
+
+        var rect = _settings.Anchor == ScreenAnchor.Bottom
+            ? new SKRect(left, _gpu.Height - h, left + w, _gpu.Height)
+            : new SKRect(left, 0, left + w, h);
 
         Win32.GetWindowRect(_window.Handle, out var windowRect);
 
@@ -510,7 +523,7 @@ internal sealed class IslandApp : IDisposable
         // мешает: у браузера сверху вкладки и адресная строка, а терминалу или
         // блокноту эта полоса экрана не нужна.
         if (_occlusion == ForegroundWatcher.Occlusion.Covered &&
-            _settings.ShouldCollapseFor(_watcher.ForegroundProcess))
+            _settings.ShouldCollapseFor(_watcher.OccludingProcess))
             return _settings.CollapsedLook == CollapsedLook.Hidden
                 ? IslandMode.Hidden
                 : IslandMode.Notch;
@@ -978,8 +991,8 @@ internal sealed class IslandApp : IDisposable
             $"{_gpu.AdapterName}  |  сцена {_gpu.Width}x{_gpu.Height}  dpi {_window.Dpi}",
             $"кадр {_cpuFrameMs:0.00} ms   fps {_fps:0}   всего {_framesRendered}",
             $"режим {_island.Mode}  окна: {_occlusion}  {(_island.IsAnimating ? "анимация" : "простой")}",
-            $"активно: {(_watcher.ForegroundProcess.Length > 0 ? _watcher.ForegroundProcess : "—")}" +
-            $"  сворачиваться: {(_settings.ShouldCollapseFor(_watcher.ForegroundProcess) ? "да" : "нет")}",
+            $"над островком: {(_watcher.OccludingProcess.Length > 0 ? _watcher.OccludingProcess : "—")}" +
+            $"  сворачиваться: {(_settings.ShouldCollapseFor(_watcher.OccludingProcess) ? "да" : "нет")}",
         ];
 
         var y = _gpu.Height - (lines.Length * 15f + 6f) * scale;

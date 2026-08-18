@@ -29,18 +29,37 @@ internal static class WatchTest
         using var watcher = new ForegroundWatcher();
         watcher.StateChanged += state => Say($">>> ВЫВОД: {state}");
 
-        // Зона островка: верхняя центральная полоса основного монитора.
-        var monitor = Win32.MonitorFromWindow(0, Win32.MONITOR_DEFAULTTOPRIMARY);
-        var mi = new MONITORINFO { cbSize = (uint)Marshal.SizeOf<MONITORINFO>() };
-        Win32.GetMonitorInfoW(monitor, ref mi);
-        var centerX = (mi.rcMonitor.Left + mi.rcMonitor.Right) / 2;
+        // Зона островка берётся с того же монитора и того же размера, что
+        // у настоящего приложения. Раньше здесь был жёстко зашит основной
+        // монитор, и при островке на втором экране диагностика уверенно
+        // рассказывала про чужой.
+        var settings = Configuration.Settings.Load();
+        var monitors = Win32.GetMonitors();
+        var mi = monitors.Count > 0
+            ? monitors[Math.Clamp(settings.MonitorIndex, 0, monitors.Count - 1)]
+            : new MONITORINFO { cbSize = (uint)Marshal.SizeOf<MONITORINFO>() };
+
+        var scale = Win32.ScaleForMonitor(mi, 1f);
+        var halfWidth = (int)(settings.RestWidth * scale / 2f);
+        var height = (int)((settings.RestHeight + settings.TopOffset) * scale);
+        var centerX = (mi.rcMonitor.Left + mi.rcMonitor.Right) / 2
+                    + (int)(settings.HorizontalOffset * scale);
+
+        Log.Write($"    зона островка: монитор {mi.rcMonitor.Left},{mi.rcMonitor.Top}.." +
+                  $"{mi.rcMonitor.Right},{mi.rcMonitor.Bottom}, масштаб {scale:0.##}");
+
+        // Если рядом работает настоящий островок, его окно надо исключить —
+        // иначе диагностика находит перекрытие сама в себе.
+        var live = Win32.FindWindowW("DynamicIsland.Overlay", null);
+        if (live != 0) Log.Write($"    рядом работает островок: hwnd=0x{live:X}, исключён из разбора");
+
         watcher.SetIslandRect(new RECT
         {
-            Left = centerX - 200,
+            Left = centerX - halfWidth,
             Top = mi.rcMonitor.Top,
-            Right = centerX + 200,
-            Bottom = mi.rcMonitor.Top + 60,
-        }, 0);
+            Right = centerX + halfWidth,
+            Bottom = mi.rcMonitor.Top + height,
+        }, live);
 
         // Разбор реальных окон рабочего стола: прогоняем через ту же функцию,
         // которой пользуется приложение. Интересуют окна во весь монитор —

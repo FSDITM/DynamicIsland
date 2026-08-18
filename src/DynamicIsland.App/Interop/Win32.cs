@@ -229,6 +229,9 @@ internal static class Win32
     [DllImport("user32.dll", SetLastError = true, EntryPoint = "SetWindowLongPtrW")]
     public static extern nint SetWindowLongPtrW(nint hWnd, int nIndex, nint dwNewLong);
 
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern nint FindWindowW(string? className, string? windowName);
+
     // Регион окна — авторитетная граница для системы: точки вне него не
     // считаются частью окна вообще, ни для отрисовки, ни для попадания мыши.
     [DllImport("gdi32.dll")]

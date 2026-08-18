@@ -68,14 +68,18 @@ internal sealed class ForegroundWatcher : IDisposable
     // есть ли вообще смысл считать заново.
     private nint _seenForeground;
     private RECT _seenRect;
+    private int _seenNotifyState;
 
     private long _lastPollTicks;
     private static readonly long PollTicks = Stopwatch.Frequency / 8;
 
     public Occlusion State { get; private set; } = Occlusion.Clear;
 
-    /// <summary>Имя процесса активного окна без .exe, в нижнем регистре.</summary>
-    public string ForegroundProcess { get; private set; } = "";
+    /// <summary>
+    /// Имя процесса окна, стоящего над островком, без .exe и в нижнем регистре.
+    /// Именно по нему решается, сворачиваться ли в полоску.
+    /// </summary>
+    public string OccludingProcess { get; private set; } = "";
 
     // Определять процесс по окну — не самая дешёвая операция, а активное окно
     // между событиями не меняется. Помним последнее.
@@ -203,9 +207,16 @@ internal sealed class ForegroundWatcher : IDisposable
         var fg = Win32.GetForegroundWindow();
         Win32.GetWindowRect(fg, out var rect);
 
+        // Состояние уведомлений системы обязано входить в ключ устаревания.
+        // Оно меняется само по себе — закончилось полноэкранное видео, выключили
+        // режим презентации, — и без этой проверки Occlusion.Fullscreen залипал
+        // бы до ближайшей посторонней смены окна, то есть островок пропадал
+        // и не возвращался.
+        var notify = QueryNotifyState();
+
         lock (_gate)
         {
-            if (fg == _seenForeground && Same(rect, _seenRect)) return;
+            if (fg == _seenForeground && Same(rect, _seenRect) && notify == _seenNotifyState) return;
         }
 
         Trace?.Invoke("   страховка: активное окно разошлось с последней оценкой");
@@ -226,16 +237,16 @@ internal sealed class ForegroundWatcher : IDisposable
             }
             _lastEvaluateTicks = now;
 
-            var previousProcess = ForegroundProcess;
+            var previousProcess = OccludingProcess;
             next = Evaluate();
 
-            if (next == State && previousProcess == ForegroundProcess)
+            if (next == State && previousProcess == OccludingProcess)
             {
-                Trace?.Invoke($"   без изменений: {next} / «{ForegroundProcess}»");
+                Trace?.Invoke($"   без изменений: {next} / «{OccludingProcess}»");
                 return;
             }
 
-            Trace?.Invoke($"   СМЕНА: {State}/«{previousProcess}» -> {next}/«{ForegroundProcess}»");
+            Trace?.Invoke($"   СМЕНА: {State}/«{previousProcess}» -> {next}/«{OccludingProcess}»");
             State = next;
         }
 
@@ -250,9 +261,22 @@ internal sealed class ForegroundWatcher : IDisposable
         // Запоминаем то, по чему считали: Poll сверяется именно с этим.
         _seenForeground = fg;
         _seenRect = rect;
+        _seenNotifyState = QueryNotifyState();
 
-        var (state, process) = Classify(fg, rect);
-        ForegroundProcess = process;
+        // Решает не активное окно, а то, которое реально стоит над островком.
+        // На одном мониторе это почти всегда одно и то же окно, но на двух —
+        // нет: стоит кликнуть что-нибудь на соседнем экране, и островок
+        // разворачивался обратно поверх вкладок браузера, ради которых
+        // и придумана полоска.
+        var (occupant, occupantRect) = FindOccupant();
+        if (occupant == 0)
+        {
+            OccludingProcess = "";
+            return Occlusion.Clear;
+        }
+
+        var (state, process) = Classify(occupant, occupantRect);
+        OccludingProcess = process;
 
         // Игры и полноэкранное видео Windows сообщает сама — это надёжнее,
         // чем сравнивать прямоугольники. Но сообщает на всю систему сразу,
@@ -260,11 +284,50 @@ internal sealed class ForegroundWatcher : IDisposable
         // на том же мониторе, где островок: иначе игра на одном экране гасила
         // бы островок на другом.
         if (OnIslandMonitor(fg) &&
-            Win32.SHQueryUserNotificationState(out var notifyState) == 0 &&
-            notifyState is Win32.QUNS_RUNNING_D3D_FULL_SCREEN or Win32.QUNS_PRESENTATION_MODE)
+            _seenNotifyState is Win32.QUNS_RUNNING_D3D_FULL_SCREEN or Win32.QUNS_PRESENTATION_MODE)
             return Occlusion.Fullscreen;
 
         return state;
+    }
+
+    /// <summary>Состояние уведомлений системы; 0, если спросить не удалось.</summary>
+    private static int QueryNotifyState() =>
+        Win32.SHQueryUserNotificationState(out var state) == 0 ? state : 0;
+
+    /// <summary>
+    /// Верхнее по Z-порядку настоящее окно, накрывающее зону островка.
+    ///
+    /// EnumWindows отдаёт окна сверху вниз, и перебор обрывается на первом
+    /// подходящем — обычно это первые несколько окон, потому что островок
+    /// живёт у кромки экрана.
+    /// </summary>
+    private (nint Window, RECT Rect) FindOccupant()
+    {
+        nint found = 0;
+        var foundRect = default(RECT);
+
+        Win32.EnumWindows((window, _) =>
+        {
+            if (window == _selfWindow) return true;
+            if (!Win32.IsWindowVisible(window) || Win32.IsIconic(window)) return true;
+            if (!Win32.GetWindowRect(window, out var rect)) return true;
+            if (rect.Width <= 0 || rect.Height <= 0) return true;
+            if (!Intersects(rect, _islandScreenRect)) return true;
+            if (IsShellSurface(window) || IsCloaked(window)) return true;
+
+            // Окно, сквозь которое клики проходят насквозь, ничему не мешает:
+            // это чужой оверлей вроде счётчика кадров или экранной линейки.
+            // Считать его перекрытием — значит навсегда свернуть островок
+            // в полоску из-за виджета, которого пользователь даже не замечает.
+            if ((Win32.GetWindowLongPtrW(window, Win32.GWL_EXSTYLE) & Win32.WS_EX_TRANSPARENT) != 0)
+                return true;
+
+            found = window;
+            foundRect = rect;
+            return false;
+        }, 0);
+
+        return (found, foundRect);
     }
 
     /// <summary>
