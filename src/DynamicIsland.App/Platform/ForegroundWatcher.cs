@@ -207,19 +207,37 @@ internal sealed class ForegroundWatcher : IDisposable
         var fg = Win32.GetForegroundWindow();
         Win32.GetWindowRect(fg, out var rect);
 
-        // Состояние уведомлений системы обязано входить в ключ устаревания.
-        // Оно меняется само по себе — закончилось полноэкранное видео, выключили
-        // режим презентации, — и без этой проверки Occlusion.Fullscreen залипал
-        // бы до ближайшей посторонней смены окна, то есть островок пропадал
-        // и не возвращался.
-        var notify = QueryNotifyState();
-
+        bool windowChanged, hiding;
+        int seenNotify;
         lock (_gate)
         {
-            if (fg == _seenForeground && Same(rect, _seenRect) && notify == _seenNotifyState) return;
+            windowChanged = fg != _seenForeground || !Same(rect, _seenRect);
+            hiding = State == Occlusion.Fullscreen;
+            seenNotify = _seenNotifyState;
         }
 
-        Trace?.Invoke("   страховка: активное окно разошлось с последней оценкой");
+        if (!windowChanged)
+        {
+            // Пока островок виден, переспрашивать состояние уведомлений незачем:
+            // вход в полный экран сопровождается сменой окна, её ловит хук.
+            // А вот ВЫХОД из полного экрана события окна может не дать вовсе —
+            // и без этой проверки Fullscreen залипал бы навсегда.
+            //
+            // Спрашиваем только пока прячемся, и по делу: замер показал, что
+            // сам опрос стоит 0.23 мс, но каждое изменение тянет за собой
+            // переоценку с обходом окон, а это уже 3 мс. Состояние уведомлений
+            // естественно колеблется, поэтому безусловная сверка разгоняла
+            // холостой расход с 0.06 до 2.3 процента ядра.
+            if (!hiding) return;
+            if (QueryNotifyState() == seenNotify) return;
+
+            Trace?.Invoke("   страховка: изменилось состояние уведомлений системы");
+        }
+        else
+        {
+            Trace?.Invoke("   страховка: активное окно разошлось с последней оценкой");
+        }
+
         Reevaluate(force: true);
     }
 
