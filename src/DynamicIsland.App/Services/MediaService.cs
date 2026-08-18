@@ -58,6 +58,15 @@ internal sealed class MediaService : IAsyncDisposable
     private GlobalSystemMediaTransportControlsSessionManager? _manager;
     private GlobalSystemMediaTransportControlsSession? _session;
 
+    // Подписываемся на ВСЕ сессии, а не только на показываемую: узнать,
+    // что голосовое сообщение доиграло и пора вернуться к музыке, можно
+    // только от самой этой сессии.
+    private readonly List<GlobalSystemMediaTransportControlsSession> _attached = [];
+
+    // Кто звучал последним. По нему островок возвращается к треку вместо того,
+    // чтобы застревать на закончившемся клипе.
+    private string _lastPlayingId = "";
+
     private volatile MediaSnapshot _snapshot = MediaSnapshot.Empty;
     private SKImage? _pendingArtwork;
     private int _artworkVersion;
@@ -92,8 +101,9 @@ internal sealed class MediaService : IAsyncDisposable
         try
         {
             _manager = await GlobalSystemMediaTransportControlsSessionManager.RequestAsync();
-            _manager.CurrentSessionChanged += (_, _) => AttachSession();
-            AttachSession();
+            _manager.CurrentSessionChanged += (_, _) => Reattach();
+            _manager.SessionsChanged += (_, _) => Reattach();
+            Reattach();
         }
         catch (Exception ex)
         {
@@ -102,33 +112,119 @@ internal sealed class MediaService : IAsyncDisposable
         }
     }
 
-    private void AttachSession()
+    private void Reattach()
     {
         try
         {
-            if (_session is not null)
+            foreach (var attached in _attached)
             {
-                _session.MediaPropertiesChanged -= OnPropertiesChanged;
-                _session.PlaybackInfoChanged -= OnPlaybackChanged;
-                _session.TimelinePropertiesChanged -= OnTimelineChanged;
+                attached.MediaPropertiesChanged -= OnPropertiesChanged;
+                attached.PlaybackInfoChanged -= OnPlaybackChanged;
+                attached.TimelinePropertiesChanged -= OnTimelineChanged;
             }
+            _attached.Clear();
 
-            _session = _manager?.GetCurrentSession();
+            var sessions = _manager?.GetSessions();
+            if (sessions is not null)
+                foreach (var session in sessions)
+                {
+                    session.MediaPropertiesChanged += OnPropertiesChanged;
+                    session.PlaybackInfoChanged += OnPlaybackChanged;
+                    session.TimelinePropertiesChanged += OnTimelineChanged;
+                    _attached.Add(session);
+                }
 
-            if (_session is not null)
-            {
-                _session.MediaPropertiesChanged += OnPropertiesChanged;
-                _session.PlaybackInfoChanged += OnPlaybackChanged;
-                _session.TimelinePropertiesChanged += OnTimelineChanged;
-            }
-
-            _ = RefreshAsync();
+            SelectSession();
         }
-        catch (Exception ex) { Log.Write("AttachSession: " + ex.Message); }
+        catch (Exception ex) { Log.Write("Reattach: " + ex.Message); }
     }
 
+    /// <summary>
+    /// Решает, чей трек показывать.
+    ///
+    /// Windows называет «текущей» ту сессию, которая шумела последней. После
+    /// голосового сообщения в мессенджере или ролика на видеохостинге ею
+    /// остаётся именно клип — уже остановленный, — хотя рядом стоит на паузе
+    /// музыка. Островок из-за этого застревал на доигранном клипе, и включить
+    /// трек заново было нечем.
+    /// </summary>
+    private void SelectSession()
+    {
+        try
+        {
+            var sessions = _manager?.GetSessions();
+            if (sessions is null || sessions.Count == 0) { Show(null); return; }
+
+            // Запоминаем, кто звучит: к нему и вернёмся, когда всё стихнет.
+            foreach (var session in sessions)
+                if (StatusOf(session) == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing)
+                    _lastPlayingId = session.SourceAppUserModelId;
+
+            Show(Choose(sessions));
+        }
+        catch (Exception ex) { Log.Write("SelectSession: " + ex.Message); }
+    }
+
+    private GlobalSystemMediaTransportControlsSession? Choose(
+        IReadOnlyList<GlobalSystemMediaTransportControlsSession> sessions)
+    {
+        string currentId;
+        try { currentId = _manager?.GetCurrentSession()?.SourceAppUserModelId ?? ""; }
+        catch { currentId = ""; }
+
+        var facts = new SessionFacts[sessions.Count];
+        for (var i = 0; i < sessions.Count; i++) facts[i] = FactsOf(sessions[i]);
+
+        var index = MediaPolicy.Choose(facts, currentId, _lastPlayingId);
+        return index >= 0 ? sessions[index] : null;
+    }
+
+    private static SessionFacts FactsOf(GlobalSystemMediaTransportControlsSession session)
+    {
+        try
+        {
+            var info = session.GetPlaybackInfo();
+            var controls = info.Controls;
+            return new SessionFacts(
+                session.SourceAppUserModelId,
+                info.PlaybackStatus,
+                controls.IsPlaybackPositionEnabled,
+                controls.IsNextEnabled,
+                controls.IsPauseEnabled);
+        }
+        catch
+        {
+            return new SessionFacts(
+                session.SourceAppUserModelId,
+                GlobalSystemMediaTransportControlsSessionPlaybackStatus.Closed,
+                false, false, false);
+        }
+    }
+
+    private static GlobalSystemMediaTransportControlsSessionPlaybackStatus StatusOf(
+        GlobalSystemMediaTransportControlsSession session)
+    {
+        try { return session.GetPlaybackInfo().PlaybackStatus; }
+        catch { return GlobalSystemMediaTransportControlsSessionPlaybackStatus.Closed; }
+    }
+
+    private void Show(GlobalSystemMediaTransportControlsSession? session)
+    {
+        var next = session?.SourceAppUserModelId ?? "";
+        var previous = _session?.SourceAppUserModelId ?? "";
+        _session = session;
+
+        if (next != previous)
+            Log.Write($"Медиа: источник «{(previous.Length > 0 ? previous : "—")}» -> " +
+                      $"«{(next.Length > 0 ? next : "—")}»");
+
+        _ = RefreshAsync();
+    }
+
+    // Свойства и таймлайн касаются только показываемого источника, а вот смена
+    // состояния может означать, что показывать надо уже другой.
     private void OnPropertiesChanged(GlobalSystemMediaTransportControlsSession s, object e) => _ = RefreshAsync();
-    private void OnPlaybackChanged(GlobalSystemMediaTransportControlsSession s, object e) => _ = RefreshAsync();
+    private void OnPlaybackChanged(GlobalSystemMediaTransportControlsSession s, object e) => SelectSession();
     private void OnTimelineChanged(GlobalSystemMediaTransportControlsSession s, object e) => _ = RefreshAsync();
 
     private async Task RefreshAsync()
@@ -241,13 +337,14 @@ internal sealed class MediaService : IAsyncDisposable
 
     public ValueTask DisposeAsync()
     {
-        if (_session is not null)
+        foreach (var attached in _attached)
         {
-            _session.MediaPropertiesChanged -= OnPropertiesChanged;
-            _session.PlaybackInfoChanged -= OnPlaybackChanged;
-            _session.TimelinePropertiesChanged -= OnTimelineChanged;
-            _session = null;
+            attached.MediaPropertiesChanged -= OnPropertiesChanged;
+            attached.PlaybackInfoChanged -= OnPlaybackChanged;
+            attached.TimelinePropertiesChanged -= OnTimelineChanged;
         }
+        _attached.Clear();
+        _session = null;
         SetArtwork(null, "");
         return ValueTask.CompletedTask;
     }

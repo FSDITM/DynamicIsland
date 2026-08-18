@@ -32,6 +32,15 @@ internal static class Program
             return Platform.WatchTest.Run(watchSeconds);
         }
 
+        // --mediainfo: что системный медиа-слой знает о текущем воспроизведении.
+        // Тоже до мьютекса — смысл в том, чтобы смотреть рядом с работающим плеером.
+        if (args.Contains("--mediainfo"))
+            return Services.MediaProbe.RunAsync().GetAwaiter().GetResult();
+
+        // --mediatest: правило выбора источника, прогнанное по сценариям.
+        if (args.Contains("--mediatest"))
+            return Services.MediaPolicyTest.Run();
+
         // Второй экземпляр не нужен: две иконки в трее и два островка поверх друг друга.
         using var mutex = new Mutex(true, @"Local\DynamicIsland.SingleInstance", out var isFirst);
         if (!isFirst)
