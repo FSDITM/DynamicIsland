@@ -15,7 +15,8 @@ internal sealed record MediaSnapshot(
     TimeSpan Position = default,
     TimeSpan Duration = default,
     long PositionStamp = 0,
-    bool CanSeek = false)
+    bool CanSeek = false,
+    TimeSpan TimelineStart = default)
 {
     public static readonly MediaSnapshot Empty = new(false, false, "", "", "");
 
@@ -251,21 +252,31 @@ internal sealed class MediaService : IAsyncDisposable
             var timeline = session.GetTimelineProperties();
             var stamp = System.Diagnostics.Stopwatch.GetTimestamp();
 
-            var duration = timeline is null ? TimeSpan.Zero : timeline.EndTime - timeline.StartTime;
-            var position = timeline is null ? TimeSpan.Zero : timeline.Position - timeline.StartTime;
-            if (position < TimeSpan.Zero) position = TimeSpan.Zero;
-            if (duration < TimeSpan.Zero) duration = TimeSpan.Zero;
+            var isPlaying = playback?.PlaybackStatus
+                            == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing;
+
+            // Плеер сообщает позицию редко — считать её свежей нельзя.
+            // Подробности и замеры в TimelineMath.
+            var reportAge = timeline is null
+                ? TimeSpan.Zero
+                : DateTimeOffset.Now - timeline.LastUpdatedTime;
+
+            var (position, duration) = timeline is null
+                ? (TimeSpan.Zero, TimeSpan.Zero)
+                : TimelineMath.Compute(timeline.StartTime, timeline.EndTime,
+                                       timeline.Position, reportAge, isPlaying);
 
             _snapshot = new MediaSnapshot(
                 HasSession: true,
-                IsPlaying: playback?.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing,
+                IsPlaying: isPlaying,
                 Title: title,
                 Artist: artist,
                 AppId: session.SourceAppUserModelId ?? "",
                 Position: position,
                 Duration: duration,
                 PositionStamp: stamp,
-                CanSeek: playback?.Controls.IsPlaybackPositionEnabled ?? false);
+                CanSeek: playback?.Controls.IsPlaybackPositionEnabled ?? false,
+                TimelineStart: timeline?.StartTime ?? TimeSpan.Zero);
 
             // Обложка декодируется только когда сменился трек — это самая
             // дорогая операция в сервисе.
@@ -313,13 +324,21 @@ internal sealed class MediaService : IAsyncDisposable
         var snapshot = _snapshot;
         if (!snapshot.HasTimeline) return Task.CompletedTask;
 
-        var target = TimeSpan.FromSeconds(snapshot.Duration.TotalSeconds * Math.Clamp(progress, 0f, 1f));
+        // В снимке позиция отсчитывается от начала трека, а плееру нужна
+        // абсолютная — от начала таймлайна. У обычных треков начало нулевое,
+        // и разницы нет, а у потоков и радио — есть.
+        var relative = TimeSpan.FromSeconds(snapshot.Duration.TotalSeconds * Math.Clamp(progress, 0f, 1f));
+        var absolute = snapshot.TimelineStart + relative;
 
         // Обновляем снимок сразу, не дожидаясь события от плеера: иначе
         // ползунок прыгал бы обратно на старое место на пару кадров.
-        _snapshot = snapshot with { Position = target, PositionStamp = System.Diagnostics.Stopwatch.GetTimestamp() };
+        _snapshot = snapshot with
+        {
+            Position = relative,
+            PositionStamp = System.Diagnostics.Stopwatch.GetTimestamp(),
+        };
 
-        return Safe(s => s.TryChangePlaybackPositionAsync(target.Ticks).AsTask());
+        return Safe(s => s.TryChangePlaybackPositionAsync(absolute.Ticks).AsTask());
     }
 
     public Task TogglePlayPauseAsync() => Safe(s => s.TryTogglePlayPauseAsync().AsTask());

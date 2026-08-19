@@ -14,6 +14,10 @@ namespace DynamicIsland.Services;
 /// </summary>
 internal static class MediaProbe
 {
+    /// <summary>Минуты и секунды. Без хитрых форматов: их экранирование только путает.</summary>
+    private static string Clock(TimeSpan value) =>
+        $"{(int)value.TotalMinutes}:{value.Seconds:00}";
+
     public static async Task<int> RunAsync()
     {
         Log.Write("=== РАЗБОР МЕДИА-СЕССИЙ ===");
@@ -74,6 +78,28 @@ internal static class MediaProbe
             {
                 Log.Write("      свойства не прочитались: " + ex.Message);
             }
+
+            try
+            {
+                var t = session.GetTimelineProperties();
+                var age = DateTimeOffset.Now - t.LastUpdatedTime;
+
+                Log.Write($"      таймлайн: позиция {t.Position}, начало {t.StartTime}, конец {t.EndTime}");
+                Log.Write($"                seek от {t.MinSeekTime} до {t.MaxSeekTime}");
+                Log.Write($"                сообщено в {t.LastUpdatedTime:HH:mm:ss.fff}, " +
+                          $"это было {age.TotalSeconds:0.0} с назад");
+
+                // Так считает приложение сейчас и так считало бы, отсчитывая
+                // от момента, когда плеер сам сообщил позицию.
+                var naive = t.Position - t.StartTime;
+                var honest = naive + (t.LastUpdatedTime == default ? TimeSpan.Zero : age);
+                Log.Write($"                показали бы: {naive:mm\\:ss} (от чтения) " +
+                          $"против {honest:mm\\:ss} (от отметки плеера)");
+            }
+            catch (Exception ex)
+            {
+                Log.Write("      таймлайн не прочитался: " + ex.Message);
+            }
         }
 
         // 3. И главное: что из всего этого выберет само приложение.
@@ -85,7 +111,9 @@ internal static class MediaProbe
         var snap = service.Snapshot;
         Log.Write(snap.HasSession
             ? $"    ПОКАЖЕТ: «{snap.Title}» — {snap.Artist}   источник {snap.AppId}, " +
-              $"играет={snap.IsPlaying}, перемотка={snap.CanSeek}"
+              $"играет={snap.IsPlaying}, перемотка={snap.CanSeek}, " +
+              $"ползунок {Clock(snap.EffectivePosition)} из {Clock(snap.Duration)} " +
+              $"({snap.Progress * 100:0}%)"
             : "    ПОКАЖЕТ: ничего");
 
         Log.Write("=== КОНЕЦ РАЗБОРА ===");
