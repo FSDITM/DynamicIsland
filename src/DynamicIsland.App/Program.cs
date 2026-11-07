@@ -2,11 +2,13 @@ using System.IO;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using DynamicIsland.Configuration;
+using DynamicIsland.Features;
 using DynamicIsland.Interop;
 using DynamicIsland.Platform;
 using DynamicIsland.Rendering;
 using DynamicIsland.Services;
 using DynamicIsland.Ui;
+using DynamicIsland.Ui.Tabs;
 using SkiaSharp;
 
 namespace DynamicIsland;
@@ -41,11 +43,31 @@ internal static class Program
         if (args.Contains("--mediatest"))
             return Services.MediaPolicyTest.Run();
 
-        // Второй экземпляр не нужен: две иконки в трее и два островка поверх друг друга.
-        using var mutex = new Mutex(true, @"Local\DynamicIsland.SingleInstance", out var isFirst);
-        if (!isFirst)
+        var customIdx = Array.IndexOf(args, "--snapcustom");
+        if (customIdx >= 0 && customIdx + 1 < args.Length)
         {
-            Win32.MessageBoxW(0, "DynamicIsland уже запущен.", "DynamicIsland", 0x40);
+            Ui.SnapshotTabs.RenderCustom(args[customIdx + 1]);
+            return 0;
+        }
+
+        var qrIdx = Array.IndexOf(args, "--makeqr");
+        if (qrIdx >= 0 && qrIdx + 2 < args.Length)
+        {
+            Features.FeatureTests.MakeQrPng(args[qrIdx + 1], args[qrIdx + 2]);
+            return 0;
+        }
+
+        var featIdx = Array.IndexOf(args, "--featuretest");
+        if (featIdx >= 0 && featIdx + 1 < args.Length)
+            return Features.FeatureTests.Run(args[featIdx + 1]);
+
+        // --snaptabs <папка>: вкладки панели и таблица значков в PNG.
+        var tabsIdx = Array.IndexOf(args, "--snaptabs");
+        if (tabsIdx >= 0 && tabsIdx + 1 < args.Length)
+        {
+            Ui.SnapshotTabs.RenderAll(args[tabsIdx + 1]);
+            Ui.SnapshotTabs.RenderAll(args[tabsIdx + 1], light: true);
+            Ui.SnapshotTabs.RenderGlyphSheet(System.IO.Path.Combine(args[tabsIdx + 1], "glyphs.png"));
             return 0;
         }
 
@@ -56,24 +78,6 @@ internal static class Program
         {
             Ui.SnapshotRenderer.RenderAll(args[snapIdx + 1]);
             return 0;
-        }
-
-        // --icon <ico> [png]: пересобрать логотип приложения.
-        var iconIdx = Array.IndexOf(args, "--icon");
-        if (iconIdx >= 0 && iconIdx + 1 < args.Length)
-        {
-            try
-            {
-                Ui.IconGenerator.Generate(args[iconIdx + 1],
-                    iconIdx + 2 < args.Length ? args[iconIdx + 2] : null);
-                Log.Write("Иконка собрана: " + args[iconIdx + 1]);
-                return 0;
-            }
-            catch (Exception ex)
-            {
-                Log.Write("Иконка не собралась: " + ex);
-                return 1;
-            }
         }
 
         // --previewsettings <папка>: отрисовать окно настроек в PNG.
@@ -98,6 +102,32 @@ internal static class Program
                 Log.Write("Предпросмотр настроек не удался: " + ex);
                 return 1;
             }
+        }
+
+        // --icon <ico> [png]: пересобрать логотип приложения.
+        var iconIdx = Array.IndexOf(args, "--icon");
+        if (iconIdx >= 0 && iconIdx + 1 < args.Length)
+        {
+            try
+            {
+                Ui.IconGenerator.Generate(args[iconIdx + 1],
+                    iconIdx + 2 < args.Length ? args[iconIdx + 2] : null);
+                Log.Write("Иконка собрана: " + args[iconIdx + 1]);
+                return 0;
+            }
+            catch (Exception ex)
+            {
+                Log.Write("Иконка не собралась: " + ex);
+                return 1;
+            }
+        }
+
+        // Второй экземпляр не нужен: две иконки в трее и два островка поверх друг друга.
+        using var mutex = new Mutex(true, @"Local\DynamicIsland.SingleInstance", out var isFirst);
+        if (!isFirst)
+        {
+            Win32.MessageBoxW(0, "DynamicIsland уже запущен.", "DynamicIsland", 0x40);
+            return 0;
         }
 
         if (args.Contains("--testmenu"))
@@ -171,6 +201,33 @@ internal sealed class IslandApp : IDisposable
     private readonly MediaService _media = new();
     private readonly PowerService _power = new();
     private readonly Hotkey _hotkey = new();
+    private readonly HotkeyBank _hotkeys = new();
+
+    private PillHub _hub = null!;
+    private ReminderService _reminders = null!;
+    private NotesService _notes = null!;
+    private AudioService _audio = null!;
+    private ControlsService _controls = null!;
+    private WeatherService _weather = null!;
+    private LyricsService _lyrics = null!;
+    private CaptureController _capture = null!;
+    private EventMonitor _events = null!;
+    private readonly AppIndex _index = new();
+    private ClipboardService _clipboard = null!;
+    private ShelfService _shelf = null!;
+    private ShelfTab _shelfTab = null!;
+    private ShelfDropTarget? _dropTarget;
+    private SKPoint _pressPoint;
+    private long _lastExpandedTicks;
+
+    private const int HkHide = 0xD1;
+    private const int HkCommandBar = 0xE1;
+    private const int HkScreenshot = 0xE2;
+    private const int HkOcr = 0xE3;
+    private const int HkColor = 0xE4;
+    private const int HkQr = 0xE5;
+    private const int HkRecord = 0xE6;
+    private const int HkPastePlain = 0xE7;
 
     private Timer? _clockTimer;
     private Timer? _saveTimer;
@@ -186,8 +243,14 @@ internal sealed class IslandApp : IDisposable
     // смещение по горизонтали. Больше не делаем: поверхность очищается и
     // перерисовывается целиком каждый кадр, лишние пиксели стоят времени.
     // Размытие тени — 26 логических пикселей, 60 в запасе хватает с избытком.
-    private int StageLogicalWidth => (int)(_settings.ExpandedWidth + 120 + MathF.Abs(_settings.HorizontalOffset) * 2);
-    private int StageLogicalHeight => (int)(_settings.ExpandedHeight + _settings.TopOffset + 60);
+    private int StageLogicalWidth =>
+        (int)((MathF.Max(_settings.ExpandedWidth, _settings.PanelWidth) + 120) * _settings.IslandScale +
+              MathF.Abs(_settings.HorizontalOffset) * 2);
+    private int StageLogicalHeight =>
+        (int)((MathF.Max(_settings.ExpandedHeight, _settings.PanelHeight) + _settings.TopOffset + 60) * _settings.IslandScale);
+
+    /// <summary>Масштаб островка: системный DPI на общий множитель из настроек.</summary>
+    private float ContentScale => _window.Scale * _settings.IslandScale;
 
     // Курсор должен задержаться над островком, прежде чем тот раскроется.
     private long DwellTicks => Stopwatch.Frequency * _settings.HoverDelayMs / 1000;
@@ -257,11 +320,70 @@ internal sealed class IslandApp : IDisposable
         var (x, y) = MonitorEdgeCenter();
         _window.Create(x, y, 200, 100);
 
+        // Буфер, полка и вкладки.
+        Native.OleInitialize(0);
+        _clipboard = new ClipboardService(_settings);
+        _shelf = new ShelfService();
+        _shelfTab = new ShelfTab(_shelf);
+        _content.Views[1] = new ClipboardTab(_clipboard);
+        _content.Views[2] = _shelfTab;
+        _content.Views[3] = new TextTab(_clipboard, _settings);
+        _clipboard.Changed += _window.Wake;
+        _shelf.Changed += _window.Wake;
+
+        _hub = new PillHub();
+        _hub.Changed += _window.Wake;
+        _content.Hub = _hub;
+
+        _reminders = new ReminderService(_settings, _hub);
+        _notes = new NotesService();
+        _audio = new AudioService { VolumeDevice = _settings.VolumeDevice, MicDevice = _settings.MicDevice };
+        _controls = new ControlsService(_settings, _hub);
+        _weather = new WeatherService(_settings, _hub);
+        _lyrics = new LyricsService();
+        _capture = new CaptureController(_settings, _clipboard, _hub);
+        _events = new EventMonitor(_settings, _hub);
+
+        _reminders.Changed += _window.Wake;
+        _controls.Changed += _window.Wake;
+        _weather.Changed += _window.Wake;
+        _lyrics.Changed += _window.Wake;
+        _capture.Changed += _window.Wake;
+
+        _content.Views[4] = new NotesTab(_notes, _reminders);
+        _content.Views[5] = new ControlsTab(_controls, _audio);
+        _content.Views[6] = new WeatherTab(_weather, _settings);
+        _content.Views[7] = new ToolsTab(_capture, _clipboard, _settings, () => SettingsWindowHost.Show(_settings));
+        _notes.Changed += _window.Wake;
+        _content.LyricLine = () => _settings.ShowLyrics ? _lyrics.LineAt(_media.Snapshot.EffectivePosition) : null;
+
+        CommandBarHost.Init(new CommandHost
+        {
+            Settings = _settings,
+            Clipboard = _clipboard,
+            Reminders = _reminders,
+            Index = _index,
+            OpenTab = OpenTab,
+            OpenSettings = () => SettingsWindowHost.Show(_settings),
+            NewNote = () => { var n = _notes.Create("Заметки"); NoteEditorHost.Open(_notes, n.Id); },
+            Capture = _capture.Run,
+            SetCity = async name =>
+            {
+                var resolved = await _weather.SetCityAsync(name);
+                if (resolved is not null) OpenTab(6);
+                return resolved;
+            },
+            Toast = msg => _hub.Post(new Card { Glyph = G.Check, Title = msg, Seconds = 2f }),
+        });
+        _shelf.Dropped += () => { _content.ActiveTab = 2; _window.Wake(); };
+
         _window.HitTest = HitTest;
+        _window.ClipboardChanged += _clipboard.OnSystemChanged;
+        _window.MouseWheel += OnWheel;
         _window.MouseMoved += OnMouseMoved;
         _window.MouseLeft += OnMouseLeft;
         _window.MouseButton += OnMouseButton;
-        _window.RightClicked += ShowTrayMenu;
+        _window.RightClicked += OnRightClick;
         _window.CaptureLost += () =>
         {
             _scrubbing = false;
@@ -284,6 +406,10 @@ internal sealed class IslandApp : IDisposable
                   $"слой валидации: {_gpu.DebugLayerStatus}");
 
         _tray.Add(_window.Handle, "DynamicIsland");
+        Native.AddClipboardFormatListener(_window.Handle);
+        _dropTarget = new ShelfDropTarget(_shelf);
+        var dropResult = Native.RegisterDragDrop(_window.Handle, _dropTarget);
+        if (dropResult != 0) Log.Write($"Приём файлов не включён: HRESULT 0x{dropResult:X8}");
 
         // Сервисы будят цикл отрисовки сообщением — сами ничего не рисуют.
         _power.Changed += _window.Wake;
@@ -291,16 +417,21 @@ internal sealed class IslandApp : IDisposable
         _power.Start();
         _ = _media.StartAsync();
 
+        _reminders.Start();
+        _controls.StartMonitoring();
+        _weather.Start();
+        _events.Start();
+        // Переменная нужна только разработчику: без неё островок не виден ни на одном снимке экрана.
+        ScreenGrab.SetCaptureVisibility(_window.Handle,
+            _settings.IslandInCapture || Environment.GetEnvironmentVariable("DYNAMICISLAND_SHOW_IN_CAPTURE") == "1");
+
         _watcher.StateChanged += state => { _occlusion = state; _window.Wake(); };
         UpdateWatcherRect();
 
-        _window.HotkeyPressed += () =>
-        {
-            _manuallyHidden = !_manuallyHidden;
-            _needsRedraw = true;
-        };
+        _window.HotkeyPressed += OnHotkey;
 
         _hotkey.Apply(_window.Handle, _settings.Hotkey);
+        ApplyFeatureHotkeys();
         StartupRegistration.Set(_settings.RunOnStartup);
 
         // Правки из окна настроек приходят из чужого потока: здесь только
@@ -312,6 +443,104 @@ internal sealed class IslandApp : IDisposable
         if (_openSettingsOnStart) SettingsWindowHost.Show(_settings);
 
         RenderLoop();
+    }
+
+    private void ApplyFeatureHotkeys()
+    {
+        _hotkeys.Apply(_window.Handle, HkCommandBar, _settings.HotkeyCommandBar);
+        _hotkeys.Apply(_window.Handle, HkScreenshot, _settings.HotkeyScreenshot);
+        _hotkeys.Apply(_window.Handle, HkOcr, _settings.HotkeyOcr);
+        _hotkeys.Apply(_window.Handle, HkColor, _settings.HotkeyColor);
+        _hotkeys.Apply(_window.Handle, HkQr, _settings.HotkeyQr);
+        _hotkeys.Apply(_window.Handle, HkRecord, _settings.HotkeyRecord);
+        _hotkeys.Apply(_window.Handle, HkPastePlain, _settings.HotkeyPastePlain);
+    }
+
+    private void OnHotkey(int id)
+    {
+        switch (id)
+        {
+            case HkHide:
+                _manuallyHidden = !_manuallyHidden;
+                _needsRedraw = true;
+                break;
+            case HkPastePlain:
+                _clipboard.PastePlainFromClipboard();
+                break;
+            case HkCommandBar:
+                CommandBarHost.Toggle();
+                break;
+            case HkScreenshot: _capture.Run("shot"); break;
+            case HkOcr: _capture.Run("ocr"); break;
+            case HkColor: _capture.Run("color"); break;
+            case HkQr: _capture.Run("qr"); break;
+            case HkRecord: _capture.Run("record"); break;
+        }
+    }
+
+    private void OnRightClick()
+    {
+        var p = _window.CursorClient;
+        if (!_content.Ui.Hits.Click(p.X, p.Y, right: true)) ShowTrayMenu();
+        _needsRedraw = true;
+    }
+
+    private void OnWheel(int delta)
+    {
+        if (_content.ActiveTab != 0)
+        {
+            _content.Views[_content.ActiveTab]?.Wheel(delta);
+        }
+        else if (_settings.WheelVolume && _hub.Current is null)
+        {
+            // Колесо над «Главной» меняет громкость, как на телефоне.
+            var current = _audio.Volume ?? 0f;
+            var next = Math.Clamp(current + (delta > 0 ? 0.03f : -0.03f), 0f, 1f);
+            _audio.Volume = next;
+            _hub.Post(new Card
+            {
+                Glyph = next <= 0.001f ? G.Mute : G.Volume,
+                Title = "Громкость",
+                Subtitle = $"{(int)Math.Round(next * 100)}%",
+                Progress = next,
+                Seconds = 1.2f,
+            });
+        }
+        _needsRedraw = true;
+    }
+
+    private void OpenTab(int tab)
+    {
+        _content.ActiveTab = tab;
+        _lastExpandedTicks = Stopwatch.GetTimestamp();
+        _openTabAtTicks = Stopwatch.GetTimestamp();
+        _openTabRequested = true;
+        _window.Wake();
+    }
+
+    private volatile bool _openTabRequested;
+    private long _openTabAtTicks;
+
+    /// <summary>Размер раскрытого островка: «Главная» из настроек, остальные вкладки — панель.</summary>
+    private void UpdateExpandedTarget()
+    {
+        // Вкладку открыли программно (командой): держим островок раскрытым ~4 с или пока на нём курсор.
+        if (_openTabRequested && Stopwatch.GetTimestamp() - _openTabAtTicks > Stopwatch.Frequency * 4 && !HoverEngaged)
+            _openTabRequested = false;
+        if (_hub.Tick()) _needsRedraw = true;
+
+        _island.ExpandedTarget = _hub.Current is { } card
+            ? new Vec2(340f, card.Buttons.Count > 0 ? 112f : 76f)
+            : _content.ActiveTab == 0
+                ? null
+                : new Vec2(_settings.PanelWidth, _settings.PanelHeight);
+
+        // Вкладка запоминается ненадолго: через несколько секунд после сворачивания
+        // островок снова открывается на «Главной».
+        if (_island.Mode == IslandMode.Expanded) _lastExpandedTicks = Stopwatch.GetTimestamp();
+        else if (_content.ActiveTab != 0 && !_island.IsAnimating &&
+                 Stopwatch.GetTimestamp() - _lastExpandedTicks > Stopwatch.Frequency * 6)
+            _content.ActiveTab = 0;
     }
 
     /// <summary>Монитор из настроек; если такого больше нет — тот, где курсор.</summary>
@@ -379,6 +608,37 @@ internal sealed class IslandApp : IDisposable
             case nameof(Settings.RunOnStartup):
                 StartupRegistration.Set(_settings.RunOnStartup);
                 break;
+            case nameof(Settings.IslandInCapture):
+                ScreenGrab.SetCaptureVisibility(_window.Handle, _settings.IslandInCapture);
+                break;
+            case nameof(Settings.VolumeDevice):
+                _audio.VolumeDevice = _settings.VolumeDevice;
+                break;
+            case nameof(Settings.MicDevice):
+                _audio.MicDevice = _settings.MicDevice;
+                break;
+            case nameof(Settings.WeatherCity):
+                if (_settings.WeatherCity != _settings.WeatherCityResolved.Split(',')[0])
+                    _ = _weather.SetCityAsync(_settings.WeatherCity);
+                break;
+            case nameof(Settings.WeatherInPill):
+            case nameof(Settings.Fahrenheit):
+                _weather.Refresh();
+                break;
+            case nameof(Settings.HotkeyCommandBar):
+            case nameof(Settings.HotkeyScreenshot):
+            case nameof(Settings.HotkeyOcr):
+            case nameof(Settings.HotkeyColor):
+            case nameof(Settings.HotkeyQr):
+            case nameof(Settings.HotkeyRecord):
+            case nameof(Settings.HotkeyPastePlain):
+                _pendingFeatureHotkeys = true;
+                break;
+            case nameof(Settings.IslandScale):
+            case nameof(Settings.PanelWidth):
+            case nameof(Settings.PanelHeight):
+                _pendingReposition = true;
+                break;
             case nameof(Settings.MonitorIndex):
             case nameof(Settings.Anchor):
             case nameof(Settings.HorizontalOffset):
@@ -399,6 +659,7 @@ internal sealed class IslandApp : IDisposable
 
     private volatile bool _pendingReposition;
     private volatile bool _pendingHotkey;
+    private volatile bool _pendingFeatureHotkeys;
 
     /// <summary>Применяет отложенные правки настроек в потоке отрисовки.</summary>
     private void ApplyPendingSettings()
@@ -407,6 +668,12 @@ internal sealed class IslandApp : IDisposable
         {
             _pendingReposition = false;
             RepositionStage();
+        }
+
+        if (_pendingFeatureHotkeys)
+        {
+            _pendingFeatureHotkeys = false;
+            ApplyFeatureHotkeys();
         }
 
         if (_pendingHotkey)
@@ -491,6 +758,8 @@ internal sealed class IslandApp : IDisposable
     {
         var snapshot = _media.Snapshot;
         var key = snapshot.HasSession ? $"{snapshot.AppId}|{snapshot.Title}|{snapshot.Artist}" : "";
+        if (_settings.ShowLyrics && snapshot.HasSession && snapshot.IsPlaying)
+            _lyrics.Track(snapshot.Artist, snapshot.Title, snapshot.Duration);
 
         if (key != _lastTrackKey)
         {
@@ -526,7 +795,8 @@ internal sealed class IslandApp : IDisposable
             return IslandMode.Hidden;
         // Пока тянут ползунок, островок не сворачивается, даже если курсор
         // ушёл за его край.
-        if (HoverEngaged || _scrubbing || IsPeeking) return IslandMode.Expanded;
+        if (HoverEngaged || _scrubbing || IsPeeking || _hub.Current is not null || _openTabRequested)
+            return IslandMode.Expanded;
 
         // Сворачиваемся не под любым окном, а только там, где островок реально
         // мешает: у браузера сверху вкладки и адресная строка, а терминалу или
@@ -550,7 +820,7 @@ internal sealed class IslandApp : IDisposable
     /// </summary>
     private SKRect TriggerRect()
     {
-        var rect = _island.GetRect(_gpu.Width, _gpu.Height, _window.Scale);
+        var rect = _island.GetRect(_gpu.Width, _gpu.Height, ContentScale);
 
         var atBottom = _settings.Anchor == ScreenAnchor.Bottom;
 
@@ -585,7 +855,7 @@ internal sealed class IslandApp : IDisposable
     /// <summary>Фигура островка — только здесь клики принадлежат нам.</summary>
     private SKRect ShapeRect()
     {
-        var rect = _island.GetRect(_gpu.Width, _gpu.Height, _window.Scale);
+        var rect = _island.GetRect(_gpu.Width, _gpu.Height, ContentScale);
         rect.Inflate(4f * _window.Scale, 4f * _window.Scale);
         return rect;
     }
@@ -616,7 +886,7 @@ internal sealed class IslandApp : IDisposable
         // Условие именно «пользователь навёл», а не «островок раскрыт»: при
         // автопоказе нового трека он раскрывается сам, и брать на себя клики
         // в это время нельзя — они принадлежат тому окну, где человек работает.
-        return HoverEngaged && ShapeRect().Contains(clientX, clientY);
+        return (HoverEngaged || CardInteractive) && ShapeRect().Contains(clientX, clientY);
     }
 
     /// <summary>
@@ -672,7 +942,9 @@ internal sealed class IslandApp : IDisposable
     /// ползунок. В любой другой момент оно для мыши не существует.
     /// </summary>
     private void ApplyInputTransparency() =>
-        _window.SetClickThrough(!(HoverEngaged || _scrubbing));
+        _window.SetClickThrough(!(HoverEngaged || _scrubbing || CardInteractive));
+
+    private bool CardInteractive => _hub.Current is { Interactive: true };
 
     /// <summary>
     /// Сжимает окно до фигуры островка. Запас берём под тень — она уходит
@@ -680,7 +952,7 @@ internal sealed class IslandApp : IDisposable
     /// </summary>
     private void ApplyWindowShape()
     {
-        var scale = _window.Scale;
+        var scale = ContentScale;
         var rect = _island.GetRect(_gpu.Width, _gpu.Height, scale);
 
         // Окно скрыто — region в один пиксель. Ни одного нажатия перехватить
@@ -744,9 +1016,13 @@ internal sealed class IslandApp : IDisposable
 
         if (down)
         {
+            _pressPoint = new SKPoint(x, y);
+            _shelfTab.ArmedDrag = null;
+            _content.Ui.Hits.Press(x, y);
+
             // Нажатие на полосу — сразу переходим в режим перетаскивания и
             // перехватываем мышь, чтобы не потерять её за краем островка.
-            if (_media.Snapshot.HasTimeline && _content.SeekHitRect.Contains(x, y))
+            if (_content.ActiveTab == 0 && _hub.Current is null && _media.Snapshot.HasTimeline && _content.SeekHitRect.Contains(x, y))
             {
                 _scrubbing = true;
                 _content.ScrubProgress = _content.ProgressFromX(x);
@@ -767,6 +1043,10 @@ internal sealed class IslandApp : IDisposable
             return;
         }
 
+        _shelfTab.ArmedDrag = null;
+        var handled = _content.Ui.Hits.Click(x, y, right: false);
+        if (handled) { _needsRedraw = true; return; }
+
         switch (_content.HitButton(x, y))
         {
             case IslandButton.PlayPause: _ = _media.TogglePlayPauseAsync(); break;
@@ -777,6 +1057,20 @@ internal sealed class IslandApp : IDisposable
 
     private void OnMouseMoved()
     {
+        // Файл с полки потянули — отдаём перетаскивание системе.
+        if (_window.LeftDown && _shelfTab.ArmedDrag is { } drag)
+        {
+            var dx = _window.CursorClient.X - _pressPoint.X;
+            var dy = _window.CursorClient.Y - _pressPoint.Y;
+            if (dx * dx + dy * dy > 64f * _window.Scale)
+            {
+                _shelfTab.ArmedDrag = null;
+                ShelfDragSource.Start(drag);
+                _needsRedraw = true;
+                return;
+            }
+        }
+
         if (_scrubbing)
             _content.ScrubProgress = _content.ProgressFromX(_window.CursorClient.X);
 
@@ -841,6 +1135,8 @@ internal sealed class IslandApp : IDisposable
             ApplyInputTransparency();
             ApplyWindowShape();
 
+            UpdateExpandedTarget();
+
             var mode = ResolveMode();
             if (mode != lastMode)
             {
@@ -854,6 +1150,7 @@ internal sealed class IslandApp : IDisposable
             {
                 _artwork?.Dispose();
                 _artwork = newArtwork;
+                _content.ArtAccent = newArtwork is null ? null : ArtColor.Dominant(newArtwork);
                 _needsRedraw = true;
             }
 
@@ -908,7 +1205,7 @@ internal sealed class IslandApp : IDisposable
                 // Ждём готовности DXGI принять следующий кадр — привязка к развёртке.
                 OverlayWindow.WaitForInputOrHandles(waitHandles, 100);
             }
-            else if (_media.Snapshot.IsPlaying &&
+            else if ((_media.Snapshot.IsPlaying || _hub.HasPulsingChip) &&
                      _island.Mode is IslandMode.Rest or IslandMode.Expanded)
             {
                 // Играет музыка: в компактном виде крутится эквалайзер,
@@ -926,8 +1223,9 @@ internal sealed class IslandApp : IDisposable
                 // курсор далеко от островка.
                 _fps = 0;
                 idleWaits++;
-                OverlayWindow.WaitForInputOrHandles(empty,
-                    _selfTestSeconds > 0 ? 8u : CursorPollIntervalMs);
+                var idleMs = _selfTestSeconds > 0 ? 8u : CursorPollIntervalMs;
+                if (_hub.MillisecondsLeft() is { } cardMs) idleMs = Math.Min(idleMs, (uint)Math.Max(30, cardMs));
+                OverlayWindow.WaitForInputOrHandles(empty, idleMs);
                 last = Stopwatch.GetTimestamp();
             }
         }
@@ -983,8 +1281,9 @@ internal sealed class IslandApp : IDisposable
         _content.SeekHovered = _scrubbing ||
             _content.SeekHitRect.Contains(_window.CursorClient.X, _window.CursorClient.Y);
         _content.MusicPhase = (float)_uptime.Elapsed.TotalSeconds;
+        _content.CursorPhys = new SKPoint(_window.CursorClient.X, _window.CursorClient.Y);
 
-        _content.Draw(canvas, _island, _gpu.Width, _gpu.Height, _window.Scale,
+        _content.Draw(canvas, _island, _gpu.Width, _gpu.Height, ContentScale,
             _media.Snapshot, _artwork, _power.Snapshot);
 
         if (_settings.ShowMetrics) DrawHud(canvas);
@@ -1024,6 +1323,16 @@ internal sealed class IslandApp : IDisposable
         _peekTimer?.Dispose();
         _saveTimer?.Dispose();
         _hotkey.Dispose();
+        _hotkeys.Dispose();
+        _events.Dispose();
+        _weather.Dispose();
+        _controls.Dispose();
+        _reminders.Dispose();
+        _lyrics.Dispose();
+        _audio.Dispose();
+        Native.RemoveClipboardFormatListener(_window.Handle);
+        Native.RevokeDragDrop(_window.Handle);
+        UiThread.Shutdown();
         _tray.Dispose();
         _watcher.Dispose();
         _power.Dispose();

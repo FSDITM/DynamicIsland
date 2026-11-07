@@ -8,6 +8,19 @@ namespace DynamicIsland.Configuration;
 
 internal enum ScreenAnchor { Top, Bottom }
 
+/// <summary>Чем подписаны вкладки.</summary>
+internal enum TabStyle { Icons, Emoji }
+
+/// <summary>Тема самого островка.</summary>
+internal enum IslandTheme
+{
+    Dark,
+    Light,
+
+    /// <summary>Как в Windows.</summary>
+    System,
+}
+
 /// <summary>Во что превращается островок, когда мешает чужому окну.</summary>
 internal enum CollapsedLook
 {
@@ -63,7 +76,7 @@ internal sealed class Settings : INotifyPropertyChanged
     private float _opacity = 1f;
     private float _shadowStrength = 1f;
     private uint _backgroundColor = 0xFF0A0A0C;
-    private uint _accentColor = 0xFF48BEFF;
+    private uint _accentColor = 0xFFF0EDE6;
 
     public float NotchWidth { get => _notchWidth; set => Set(ref _notchWidth, Math.Clamp(value, 60f, 600f)); }
     public float NotchHeight { get => _notchHeight; set => Set(ref _notchHeight, Math.Clamp(value, 2f, 40f)); }
@@ -77,6 +90,31 @@ internal sealed class Settings : INotifyPropertyChanged
     public float ShadowStrength { get => _shadowStrength; set => Set(ref _shadowStrength, Math.Clamp(value, 0f, 2f)); }
     public uint BackgroundColor { get => _backgroundColor; set => Set(ref _backgroundColor, value); }
     public uint AccentColor { get => _accentColor; set => Set(ref _accentColor, value); }
+
+    private uint _equalizerColor;
+    private uint _iconColor;
+    private TabStyle _tabStyle = TabStyle.Icons;
+    private string _tabEmoji = "🏠 📋 🗂️ 🔤 📝 🎛️ 🌦️ 🛠️";
+
+    /// <summary>Цвет эквалайзера. 0 — как акцент.</summary>
+    public uint EqualizerColor { get => _equalizerColor; set => Set(ref _equalizerColor, value); }
+
+    /// <summary>Цвет значков вкладок. 0 — стандартный.</summary>
+    public uint IconColor { get => _iconColor; set => Set(ref _iconColor, value); }
+
+    [JsonConverter(typeof(JsonStringEnumConverter))]
+    public TabStyle TabStyle { get => _tabStyle; set => Set(ref _tabStyle, value); }
+
+    /// <summary>Эмодзи вкладок через пробел: Главная, Буфер, Полка, Текст, Заметки, Управление, Погода, Инструменты.</summary>
+    public string TabEmoji { get => _tabEmoji; set => Set(ref _tabEmoji, string.IsNullOrWhiteSpace(value) ? "🏠 📋 🗂️ 🔤 📝 🎛️ 🌦️ 🛠️" : value); }
+
+    private bool _accentFromArt = true;
+
+    /// <summary>
+    /// Акцент берётся из обложки играющего трека, а без неё остаётся тёплым белым.
+    /// Выключите, чтобы всегда использовать свой цвет из поля выше.
+    /// </summary>
+    public bool AccentFromArt { get => _accentFromArt; set => Set(ref _accentFromArt, value); }
 
     // ---------- Поведение ----------
 
@@ -173,7 +211,7 @@ internal sealed class Settings : INotifyPropertyChanged
     public bool Use24HourClock { get => _use24Hour; set => Set(ref _use24Hour, value); }
 
     /// <summary>
-    /// Имя семейства шрифта из системы. Пусто — вшитый Inter.
+    /// Имя семейства шрифта из системы. Пусто — вшитый Rubik.
     /// Существует, чтобы можно было поставить свой шрифт: например SF Pro,
     /// если он у вас установлен. Вшить его в приложение нельзя — лицензия
     /// Apple разрешает использовать SF Pro только при разработке под Apple.
@@ -184,6 +222,126 @@ internal sealed class Settings : INotifyPropertyChanged
 
     /// <summary>Сочетание вида «Ctrl+Alt+D». Пустая строка — клавиша отключена.</summary>
     public string Hotkey { get => _hotkey; set => Set(ref _hotkey, value ?? ""); }
+
+    // ---------- 2.0: панель и вкладки ----------
+
+    private float _panelWidth = 520f;
+    private float _panelHeight = 310f;
+    private float _islandScale = 1f;
+    private IslandTheme _theme = IslandTheme.Dark;
+
+    /// <summary>Размер раскрытой панели с вкладками (кроме «Главной»).</summary>
+    public float PanelWidth { get => _panelWidth; set => Set(ref _panelWidth, Math.Clamp(value, 380f, 900f)); }
+    public float PanelHeight { get => _panelHeight; set => Set(ref _panelHeight, Math.Clamp(value, 220f, 600f)); }
+
+    /// <summary>Общий масштаб островка: 0.8–2.0.</summary>
+    public float IslandScale { get => _islandScale; set => Set(ref _islandScale, Math.Clamp(value, 0.8f, 2f)); }
+
+    [JsonConverter(typeof(JsonStringEnumConverter))]
+    public IslandTheme Theme { get => _theme; set => Set(ref _theme, value); }
+
+    // ---------- 2.0: горячие клавиши ----------
+
+    private string _hkCommandBar = "Alt+Space";
+    private string _hkScreenshot = "Ctrl+Alt+A";
+    private string _hkOcr = "Ctrl+Alt+T";
+    private string _hkColor = "Ctrl+Alt+C";
+    private string _hkQr = "Ctrl+Alt+Q";
+    private string _hkRecord = "Ctrl+Alt+R";
+    private string _hkPastePlain = "Ctrl+Alt+V";
+
+    public string HotkeyCommandBar { get => _hkCommandBar; set => Set(ref _hkCommandBar, value ?? ""); }
+    public string HotkeyScreenshot { get => _hkScreenshot; set => Set(ref _hkScreenshot, value ?? ""); }
+    public string HotkeyOcr { get => _hkOcr; set => Set(ref _hkOcr, value ?? ""); }
+    public string HotkeyColor { get => _hkColor; set => Set(ref _hkColor, value ?? ""); }
+    public string HotkeyQr { get => _hkQr; set => Set(ref _hkQr, value ?? ""); }
+    public string HotkeyRecord { get => _hkRecord; set => Set(ref _hkRecord, value ?? ""); }
+    public string HotkeyPastePlain { get => _hkPastePlain; set => Set(ref _hkPastePlain, value ?? ""); }
+
+    // ---------- 2.0: буфер, снимки, запись ----------
+
+    private bool _clipboardHistory = true;
+    private int _clipboardLimit = 60;
+    private string _screenshotFolder = "";
+    private string _recordFolder = "";
+    private int _recordFps = 30;
+    private bool _recordHighQuality;
+    private bool _recordGif;
+    private bool _islandInCapture;
+    private bool _autoPasteAfterShot;
+
+    public bool ClipboardHistory { get => _clipboardHistory; set => Set(ref _clipboardHistory, value); }
+    public int ClipboardLimit { get => _clipboardLimit; set => Set(ref _clipboardLimit, Math.Clamp(value, 10, 200)); }
+
+    /// <summary>Пусто — «Изображения\DynamicIsland».</summary>
+    public string ScreenshotFolder { get => _screenshotFolder; set => Set(ref _screenshotFolder, value ?? ""); }
+
+    /// <summary>Пусто — «Видео\DynamicIsland».</summary>
+    public string RecordFolder { get => _recordFolder; set => Set(ref _recordFolder, value ?? ""); }
+    public int RecordFps { get => _recordFps; set => Set(ref _recordFps, value >= 45 ? 60 : 30); }
+    public bool RecordHighQuality { get => _recordHighQuality; set => Set(ref _recordHighQuality, value); }
+    public bool RecordGif { get => _recordGif; set => Set(ref _recordGif, value); }
+
+    /// <summary>Показывать островок на снимках и в записи экрана. По умолчанию его там нет.</summary>
+    public bool IslandInCapture { get => _islandInCapture; set => Set(ref _islandInCapture, value); }
+    public bool AutoPasteAfterShot { get => _autoPasteAfterShot; set => Set(ref _autoPasteAfterShot, value); }
+
+    // ---------- 2.0: события в пилюле ----------
+
+    private bool _evMicCam = true;
+    private bool _evDownloads = true;
+    private bool _evLayout = true;
+    private bool _evCaps = true;
+    private bool _evVpn = true;
+    private bool _evSteam = true;
+    private bool _evRecording = true;
+    private bool _wheelVolume = true;
+    private bool _showLyrics = true;
+
+    public bool EventMicCam { get => _evMicCam; set => Set(ref _evMicCam, value); }
+    public bool EventDownloads { get => _evDownloads; set => Set(ref _evDownloads, value); }
+    public bool EventLayout { get => _evLayout; set => Set(ref _evLayout, value); }
+    public bool EventCaps { get => _evCaps; set => Set(ref _evCaps, value); }
+    public bool EventVpn { get => _evVpn; set => Set(ref _evVpn, value); }
+    public bool EventSteam { get => _evSteam; set => Set(ref _evSteam, value); }
+    public bool EventRecording { get => _evRecording; set => Set(ref _evRecording, value); }
+    public bool WheelVolume { get => _wheelVolume; set => Set(ref _wheelVolume, value); }
+    public bool ShowLyrics { get => _showLyrics; set => Set(ref _showLyrics, value); }
+
+    // ---------- 2.0: погода ----------
+
+    private string _weatherCity = "";
+    private string _weatherCityResolved = "";
+    private double _weatherLat;
+    private double _weatherLon;
+    private bool _weatherInPill = true;
+    private bool _rainWarning = true;
+    private bool _fahrenheit;
+
+    /// <summary>Город, как его ввёл человек. Определяется только по названию, не по IP.</summary>
+    public string WeatherCity { get => _weatherCity; set => Set(ref _weatherCity, value ?? ""); }
+    public string WeatherCityResolved { get => _weatherCityResolved; set => Set(ref _weatherCityResolved, value ?? ""); }
+    public double WeatherLat { get => _weatherLat; set => Set(ref _weatherLat, value); }
+    public double WeatherLon { get => _weatherLon; set => Set(ref _weatherLon, value); }
+    public bool WeatherInPill { get => _weatherInPill; set => Set(ref _weatherInPill, value); }
+    public bool RainWarning { get => _rainWarning; set => Set(ref _rainWarning, value); }
+    public bool Fahrenheit { get => _fahrenheit; set => Set(ref _fahrenheit, value); }
+
+    // ---------- 2.0: звук ----------
+
+    private string _volumeDevice = "";
+    private string _micDevice = "";
+
+    /// <summary>Устройство вывода, чью громкость меняет островок. Пусто — выбранное в Windows.</summary>
+    public string VolumeDevice { get => _volumeDevice; set => Set(ref _volumeDevice, value ?? ""); }
+
+    /// <summary>Микрофон, который островок включает и выключает. Пусто — выбранный в Windows.</summary>
+    public string MicDevice { get => _micDevice; set => Set(ref _micDevice, value ?? ""); }
+
+    // ---------- 2.0: командная строка ----------
+
+    private string _searchUrl = "https://yandex.ru/search/?text={0}";
+    public string SearchUrl { get => _searchUrl; set => Set(ref _searchUrl, string.IsNullOrWhiteSpace(value) ? "https://yandex.ru/search/?text={0}" : value); }
 
     // ---------- Хранение ----------
 

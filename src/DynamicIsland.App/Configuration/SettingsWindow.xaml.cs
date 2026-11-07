@@ -19,6 +19,11 @@ namespace DynamicIsland.Configuration;
 /// Всё применяется мгновенно, кнопки «Сохранить» нет: настройка, которую
 /// надо подтверждать, заставляет гадать, что изменится. Здесь видно сразу.
 /// </summary>
+internal sealed record NavEntry(string Title, string Glyph)
+{
+    public override string ToString() => Title;
+}
+
 public partial class SettingsWindow : Window
 {
     private readonly Settings _settings;
@@ -35,6 +40,7 @@ public partial class SettingsWindow : Window
     {
         _settings = settings;
         InitializeComponent();
+        Platform.DarkTitleBar.Apply(this);
 
         ApplyBundledFont();
         LoadLogo();
@@ -46,15 +52,37 @@ public partial class SettingsWindow : Window
             ("Поведение", "Когда островок раскрывается, сворачивается и уходит с глаз.", BuildBehaviour),
             ("Расположение", "На каком экране и в каком месте он живёт.", BuildPlacement),
             ("Содержимое", "Что показывать и какой клавишей вызывать.", BuildContent),
+            ("Панель и события", "Вкладки, события в пилюле, звук и тема.", BuildFeatures),
+            ("Снимки и запись", "Куда сохранять и как снимать экран.", BuildCapture),
+            ("Погода", "Город, значки и предупреждения.", BuildWeatherSection),
+            ("Горячие клавиши", "Глобальные сочетания, работают в любом приложении.", BuildHotkeys),
             ("О программе", "Откуда взялся этот островок.", BuildAbout),
         ];
 
-        foreach (var (title, _, _) in _sections) Nav.Items.Add(title);
+        string[] glyphs = ["\uE790", "\uE713", "\uE707", "\uE8A5", "\uE8A9", "\uE722", "\uE753", "\uE765", "\uE946"];
+        for (var i = 0; i < _sections.Count; i++)
+            Nav.Items.Add(new NavEntry(_sections[i].Title, glyphs[Math.Min(i, glyphs.Length - 1)]));
+
+        // Пункт меню: значок из системного шрифта значков и название. Эмодзи тут нет сознательно:
+        // цветные картинки в каждой строке сразу делают окно похожим на сгенерированное.
+        var item = new FrameworkElementFactory(typeof(StackPanel));
+        item.SetValue(StackPanel.OrientationProperty, Orientation.Horizontal);
+        var icon = new FrameworkElementFactory(typeof(TextBlock));
+        icon.SetBinding(TextBlock.TextProperty, new System.Windows.Data.Binding(nameof(NavEntry.Glyph)));
+        icon.SetValue(TextBlock.FontFamilyProperty, new FontFamily("Segoe Fluent Icons, Segoe MDL2 Assets"));
+        icon.SetValue(TextBlock.FontSizeProperty, 15.0);
+        icon.SetValue(TextBlock.WidthProperty, 26.0);
+        icon.SetValue(TextBlock.ForegroundProperty, (Brush)FindResource("FgMuted"));
+        var label = new FrameworkElementFactory(typeof(TextBlock));
+        label.SetBinding(TextBlock.TextProperty, new System.Windows.Data.Binding(nameof(NavEntry.Title)));
+        item.AppendChild(icon);
+        item.AppendChild(label);
+        Nav.ItemTemplate = new DataTemplate { VisualTree = item };
         Nav.SelectedIndex = 0;
     }
 
     /// <summary>
-    /// Подключает вшитый Inter. В системе его нет, поэтому по имени он не
+    /// Подключает вшитый Rubik. В системе его нет, поэтому по имени он не
     /// найдётся — нужен путь к папке со шрифтом.
     /// </summary>
     private void ApplyBundledFont()
@@ -64,7 +92,7 @@ public partial class SettingsWindow : Window
             var dir = Path.Combine(AppContext.BaseDirectory, "Resources", "Fonts");
             if (!Directory.Exists(dir)) return;
 
-            var family = new FontFamily(new Uri(dir + Path.DirectorySeparatorChar), "./#Inter");
+            var family = new FontFamily(new Uri(dir + Path.DirectorySeparatorChar), "./#Rubik");
             if (family.FamilyNames.Count > 0) FontFamily = family;
         }
         catch (Exception ex)
@@ -206,7 +234,18 @@ public partial class SettingsWindow : Window
         SliderRow(shape, "Сила тени", 0f, 2f, 0.1f,
             () => _settings.ShadowStrength, v => _settings.ShadowStrength = v, "{0:0.0}×");
         ColorRow(shape, "Цвет фона", () => _settings.BackgroundColor, v => _settings.BackgroundColor = v);
-        ColorRow(shape, "Акцентный цвет", () => _settings.AccentColor, v => _settings.AccentColor = v);
+        ToggleRow(shape, "Акцент из обложки", () => _settings.AccentFromArt, v => _settings.AccentFromArt = v,
+            "Цвет интерфейса берётся с обложки играющего трека. Выключите, чтобы всегда брался ваш цвет ниже.");
+        ColorRow(shape, "Цвет интерфейса", () => _settings.AccentColor, v => _settings.AccentColor = v);
+        ColorRow(shape, "Цвет эквалайзера", () => _settings.EqualizerColor, v => _settings.EqualizerColor = v);
+        ColorRow(shape, "Цвет значков", () => _settings.IconColor, v => _settings.IconColor = v);
+
+        var tabs = Card(host, "Вкладки");
+        ChoiceRow(tabs, "Чем подписаны", ["Значки", "Эмодзи"],
+            () => (int)_settings.TabStyle, v => _settings.TabStyle = (TabStyle)v,
+            "Значки — тонкие контурные; эмодзи — цветные из системного шрифта.");
+        TextRow(tabs, "Эмодзи вкладок", () => _settings.TabEmoji, v => _settings.TabEmoji = v,
+            "Восемь через пробел: Главная, Буфер, Полка, Текст, Заметки, Управление, Погода, Инструменты. Win+. открывает панель эмодзи.");
     }
 
     private void BuildBehaviour(Panel host)
@@ -285,7 +324,7 @@ public partial class SettingsWindow : Window
 
         var font = Card(host, "Шрифт");
         TextRow(font, "Семейство", () => _settings.FontFamily, v => _settings.FontFamily = v,
-            "Пусто — вшитый Inter. Можно указать свой, например SF Pro, если он установлен в системе.");
+            "Пусто — вшитый Rubik. Можно указать свой, например SF Pro, если он установлен в системе.");
 
         var system = Card(host, "Система");
         HotkeyRow(system);
@@ -296,13 +335,145 @@ public partial class SettingsWindow : Window
             "Кадры, время отрисовки и активное приложение — поверх островка.");
     }
 
+    private void BuildFeatures(Panel host)
+    {
+        var panel = Card(host, "Панель с вкладками");
+        SliderRow(panel, "Ширина панели", 380, 900, 10, () => _settings.PanelWidth, v => _settings.PanelWidth = v, "{0:0} px");
+        SliderRow(panel, "Высота панели", 220, 600, 10, () => _settings.PanelHeight, v => _settings.PanelHeight = v, "{0:0} px");
+        SliderRow(panel, "Масштаб островка", 0.8f, 2f, 0.05f, () => _settings.IslandScale, v => _settings.IslandScale = v, "{0:0.00}×",
+            "Во всём: пилюля, панель, карточки. Удобно на больших мониторах.");
+        ChoiceRow(panel, "Тема островка", ["Тёмная", "Светлая", "Как в Windows"],
+            () => (int)_settings.Theme, v => _settings.Theme = (IslandTheme)v);
+
+        var clip = Card(host, "Буфер обмена");
+        ToggleRow(clip, "Хранить историю", () => _settings.ClipboardHistory, v => _settings.ClipboardHistory = v,
+            "Пароли из менеджеров паролей в историю не попадают. Закреплённые записи переживают перезапуск.");
+        SliderRow(clip, "Сколько записей хранить", 10, 200, 5, () => _settings.ClipboardLimit, v => _settings.ClipboardLimit = (int)v, "{0:0}");
+
+        var events = Card(host, "События в пилюле");
+        ToggleRow(events, "Микрофон и камера в работе", () => _settings.EventMicCam, v => _settings.EventMicCam = v);
+        ToggleRow(events, "Загрузки файлов", () => _settings.EventDownloads, v => _settings.EventDownloads = v,
+            "Следит за папкой «Загрузки» и сообщает, когда файл готов.");
+        ToggleRow(events, "Раскладка клавиатуры", () => _settings.EventLayout, v => _settings.EventLayout = v);
+        ToggleRow(events, "Caps Lock", () => _settings.EventCaps, v => _settings.EventCaps = v);
+        ToggleRow(events, "VPN: страна и IP", () => _settings.EventVpn, v => _settings.EventVpn = v,
+            "Когда VPN поднимается, один запрос на ipwho.is показывает страну и адрес.");
+        ToggleRow(events, "Закачки Steam", () => _settings.EventSteam, v => _settings.EventSteam = v);
+        ToggleRow(events, "Запись экрана", () => _settings.EventRecording, v => _settings.EventRecording = v);
+        ToggleRow(events, "Громкость колесом мыши", () => _settings.WheelVolume, v => _settings.WheelVolume = v,
+            "Колесо над раскрытой «Главной» меняет громкость.");
+        ToggleRow(events, "Слова песни в такт", () => _settings.ShowLyrics, v => _settings.ShowLyrics = v,
+            "Слова берутся из открытой базы LRCLIB, только для играющего трека.");
+
+        var sound = Card(host, "Звук");
+        var audio = new Features.AudioService();
+        var outputs = new List<string> { "Как выбрано в Windows" };
+        outputs.AddRange(audio.OutputNames());
+        var inputs = new List<string> { "Как выбрано в Windows" };
+        inputs.AddRange(audio.InputNames());
+        audio.Dispose();
+
+        ChoiceRow(sound, "Чью громкость менять", outputs,
+            () => Math.Max(0, outputs.IndexOf(_settings.VolumeDevice)),
+            v => _settings.VolumeDevice = v == 0 ? "" : outputs[v]);
+        ChoiceRow(sound, "Какой микрофон выключать", inputs,
+            () => Math.Max(0, inputs.IndexOf(_settings.MicDevice)),
+            v => _settings.MicDevice = v == 0 ? "" : inputs[v],
+            "Нужно, если у вас виртуальный микшер: звук внутри системы от этого не переключается.");
+
+        var cmd = Card(host, "Командная строка");
+        TextRow(cmd, "Поиск в интернете", () => _settings.SearchUrl, v => _settings.SearchUrl = v,
+            "Адрес с {0} вместо запроса. Например https://www.google.com/search?q={0}");
+    }
+
+    private void BuildCapture(Panel host)
+    {
+        var folders = Card(host, "Куда сохранять");
+        TextRow(folders, "Папка снимков", () => _settings.ScreenshotFolder, v => _settings.ScreenshotFolder = v,
+            "Пусто — «Изображения\\DynamicIsland».");
+        TextRow(folders, "Папка записей", () => _settings.RecordFolder, v => _settings.RecordFolder = v,
+            "Пусто — «Видео\\DynamicIsland».");
+
+        var record = Card(host, "Запись экрана");
+        ChoiceRow(record, "Кадров в секунду", ["30", "60"],
+            () => _settings.RecordFps >= 60 ? 1 : 0, v => _settings.RecordFps = v == 1 ? 60 : 30);
+        ToggleRow(record, "Высокое качество", () => _settings.RecordHighQuality, v => _settings.RecordHighQuality = v,
+            "Больше размер файла, чётче картинка.");
+        ToggleRow(record, "Писать в GIF вместо MP4", () => _settings.RecordGif, v => _settings.RecordGif = v,
+            "GIF тяжелее и без звука; запись до одной минуты, 12 кадров в секунду.");
+
+        var visible = Card(host, "Видимость островка");
+        ToggleRow(visible, "Показывать островок на снимках и в записи",
+            () => _settings.IslandInCapture, v => _settings.IslandInCapture = v,
+            "По умолчанию островок на снимках экрана отсутствует.");
+    }
+
+    private void BuildWeatherSection(Panel host)
+    {
+        var card = Card(host, "Город");
+        TextRow(card, "Название города", () => _settings.WeatherCity, v => _settings.WeatherCity = v,
+            "Город ищется по названию, по сети он не угадывается. Можно и из командной строки: «город Казань».");
+        InfoRow(card, "Найдено", _settings.WeatherCityResolved.Length > 0 ? _settings.WeatherCityResolved : "—");
+
+        var show = Card(host, "Как показывать");
+        ToggleRow(show, "Температура в пилюле", () => _settings.WeatherInPill, v => _settings.WeatherInPill = v,
+            "Показывается, пока нет музыки и других событий.");
+        ToggleRow(show, "Предупреждать о дожде и снеге", () => _settings.RainWarning, v => _settings.RainWarning = v,
+            "Карточка за час-два до осадков.");
+        ToggleRow(show, "Градусы Фаренгейта", () => _settings.Fahrenheit, v => _settings.Fahrenheit = v);
+
+        var source = Card(host, "Источник");
+        InfoRow(source, "Прогноз", "Open-Meteo — без ключа и регистрации");
+    }
+
+    private void BuildHotkeys(Panel host)
+    {
+        var card = Card(host, "Сочетания клавиш");
+        HotkeyField(card, "Показать или скрыть островок", () => _settings.Hotkey, v => _settings.Hotkey = v);
+        HotkeyField(card, "Командная строка", () => _settings.HotkeyCommandBar, v => _settings.HotkeyCommandBar = v);
+        HotkeyField(card, "Снимок области", () => _settings.HotkeyScreenshot, v => _settings.HotkeyScreenshot = v);
+        HotkeyField(card, "Текст с экрана", () => _settings.HotkeyOcr, v => _settings.HotkeyOcr = v);
+        HotkeyField(card, "QR с экрана", () => _settings.HotkeyQr, v => _settings.HotkeyQr = v);
+        HotkeyField(card, "Пипетка", () => _settings.HotkeyColor, v => _settings.HotkeyColor = v);
+        HotkeyField(card, "Запись экрана", () => _settings.HotkeyRecord, v => _settings.HotkeyRecord = v);
+        HotkeyField(card, "Вставить без форматирования", () => _settings.HotkeyPastePlain, v => _settings.HotkeyPastePlain = v);
+
+        var hint = Card(host, null);
+        InfoRow(hint, "Подсказка", "Пишите сочетание так: Ctrl+Alt+A. Пустое поле выключает клавишу.");
+    }
+
+    private void HotkeyField(Panel card, string label, Func<string> get, Action<string> set)
+    {
+        var box = new TextBox { Text = get(), MinWidth = 200 };
+        var status = new TextBlock { Style = (Style)FindResource("RowHint"), Text = "Например Ctrl+Alt+D" };
+
+        void Commit()
+        {
+            var text = box.Text.Trim();
+            if (text.Length > 0 && !Hotkey.TryParse(text, out _, out _))
+            {
+                status.Text = "Не удалось разобрать — оставлено прежнее.";
+                box.Text = get();
+                return;
+            }
+            status.Text = "Например Ctrl+Alt+D";
+            Apply(() => set(text));
+        }
+
+        box.LostFocus += (_, _) => Commit();
+        box.KeyDown += (_, e) => { if (e.Key == System.Windows.Input.Key.Enter) Commit(); };
+        _refreshers.Add(() => box.Text = get());
+
+        Row(card, label, null, box);
+    }
+
     private void BuildAbout(Panel host)
     {
         var card = Card(host, null);
 
         InfoRow(card, "Версия", AppInfo.Version);
         InfoRow(card, "Отрисовка", "Direct3D 12 + DirectComposition, Skia на GPU");
-        InfoRow(card, "Шрифт", "Inter (SIL Open Font License)");
+        InfoRow(card, "Шрифт", "Rubik (SIL Open Font License)");
         InfoRow(card, "Лицензия", "MIT");
         InfoRow(card, "Файл настроек", Settings.FilePath);
 
@@ -314,7 +485,7 @@ public partial class SettingsWindow : Window
                    "Этот островок написан заново: окно размером с саму фигуру вместо " +
                    "полноэкранного, кадр не покидает видеопамять, а в покое поток спит и кадры " +
                    "не рисуются вовсе.\n\n" +
-                   "Шрифт Inter — Расмус Андерссон, SIL Open Font License.",
+                   "Шрифт Rubik — Hubert and Fischer, Cyreal; SIL Open Font License.",
             TextWrapping = TextWrapping.Wrap,
             Foreground = (Brush)FindResource("FgMuted"),
             FontSize = 13,
@@ -343,7 +514,7 @@ public partial class SettingsWindow : Window
             var label = new TextBlock
             {
                 Text = names[i],
-                HorizontalAlignment = HorizontalAlignment.Center,
+                HorizontalAlignment = HorizontalAlignment.Left,
                 Foreground = (Brush)FindResource(selected ? "Fg" : "FgMuted"),
                 FontSize = 14,
                 FontWeight = selected ? FontWeights.SemiBold : FontWeights.Normal,
@@ -351,10 +522,11 @@ public partial class SettingsWindow : Window
 
             var cell = new Border
             {
-                Background = selected ? (Brush)FindResource("Accent") : Brushes.Transparent,
-                CornerRadius = new CornerRadius(7),
-                Padding = new Thickness(0, 8, 0, 8),
-                Margin = new Thickness(3),
+                Background = Brushes.Transparent,
+                BorderBrush = selected ? (Brush)FindResource("Accent") : Brushes.Transparent,
+                BorderThickness = new Thickness(0, 0, 0, 2),
+                Padding = new Thickness(0, 8, 0, 9),
+                Margin = new Thickness(0, 0, 14, 0),
                 Cursor = System.Windows.Input.Cursors.Hand,
                 Child = label,
             };
@@ -372,8 +544,8 @@ public partial class SettingsWindow : Window
 
         return new Border
         {
-            Background = new SolidColorBrush(Color.FromRgb(0x22, 0x22, 0x2A)),
-            CornerRadius = new CornerRadius(10),
+            BorderBrush = (Brush)FindResource("Line"),
+            BorderThickness = new Thickness(0, 0, 0, 1),
             Child = grid,
             Margin = new Thickness(0, 0, 0, 18),
         };
@@ -409,7 +581,7 @@ public partial class SettingsWindow : Window
             Height = screenHeight,
             CornerRadius = new CornerRadius(14),
             Background = new LinearGradientBrush(
-                Color.FromRgb(0x2A, 0x2F, 0x3E), Color.FromRgb(0x14, 0x16, 0x1D), 60),
+                Color.FromRgb(0x38, 0x33, 0x2B), Color.FromRgb(0x1B, 0x19, 0x15), 60),
             Child = new Canvas { Children = { island } },
             Margin = new Thickness(0, 0, 0, 6),
         };
@@ -582,10 +754,10 @@ public partial class SettingsWindow : Window
         var inner = new StackPanel();
         parent.Children.Add(new Border
         {
-            Background = (Brush)FindResource("Card"),
-            CornerRadius = new CornerRadius(12),
+            BorderBrush = (Brush)FindResource("Line"),
+            BorderThickness = new Thickness(0, 1, 0, 1),
             Child = inner,
-            Margin = new Thickness(0, 0, 0, 22),
+            Margin = new Thickness(0, 0, 0, 24),
         });
         return inner;
     }
@@ -594,14 +766,14 @@ public partial class SettingsWindow : Window
     {
         Height = 1,
         Background = (Brush)FindResource("Line"),
-        Margin = new Thickness(16, 0, 0, 0),
+        Margin = new Thickness(0),
     };
 
     private void Row(Panel card, string label, string? hint, UIElement control)
     {
         if (card.Children.Count > 0) card.Children.Add(Separator());
 
-        var grid = new Grid { Margin = new Thickness(16, 13, 16, 13) };
+        var grid = new Grid { Margin = new Thickness(2, 13, 2, 13) };
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
@@ -767,7 +939,7 @@ public partial class SettingsWindow : Window
 
         if (card.Children.Count > 0) card.Children.Add(Separator());
 
-        var grid = new Grid { Margin = new Thickness(16, 13, 16, 13) };
+        var grid = new Grid { Margin = new Thickness(2, 13, 2, 13) };
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
@@ -870,11 +1042,16 @@ public partial class SettingsWindow : Window
     private static Color FromArgb(uint value) => Color.FromArgb(
         (byte)(value >> 24), (byte)(value >> 16), (byte)(value >> 8), (byte)value);
 
-    private static string ToHex(uint value) => "#" + value.ToString("X8");
+    private static string ToHex(uint value) => value == 0 ? "по умолчанию" : "#" + value.ToString("X8");
 
     private static bool TryParseHex(string text, out uint value)
     {
         text = text.Trim().TrimStart('#');
+        if (text.Length == 0 || text.StartsWith("по ", StringComparison.OrdinalIgnoreCase) || text == "0")
+        {
+            value = 0;
+            return true;
+        }
         if (text.Length == 6) text = "FF" + text;
         return uint.TryParse(text, System.Globalization.NumberStyles.HexNumber, null, out value)
                && text.Length == 8;

@@ -51,7 +51,13 @@ internal sealed class OverlayWindow : IDisposable
     public event Action? Woken;
 
     /// <summary>Нажата зарегистрированная глобальная горячая клавиша.</summary>
-    public event Action? HotkeyPressed;
+    public event Action<int>? HotkeyPressed;
+
+    /// <summary>Содержимое системного буфера обмена изменилось.</summary>
+    public event Action? ClipboardChanged;
+
+    /// <summary>Нажатие левой кнопки/движение с зажатой кнопкой: для перетаскивания элементов.</summary>
+    public bool LeftDown { get; private set; }
 
     /// <summary>Будит цикл отрисовки из любого потока.</summary>
     public void Wake() => Win32.PostMessageW(Handle, Win32.WM_APP_WAKE, 0, 0);
@@ -229,8 +235,9 @@ internal sealed class OverlayWindow : IDisposable
                 CaptureLost?.Invoke();
                 return 0;
 
-            case Win32.WM_LBUTTONDOWN: MouseButton?.Invoke(true); return 0;
-            case Win32.WM_LBUTTONUP: MouseButton?.Invoke(false); return 0;
+            case Win32.WM_LBUTTONDOWN: LeftDown = true; MouseButton?.Invoke(true); return 0;
+            case Win32.WM_LBUTTONUP: LeftDown = false; MouseButton?.Invoke(false); return 0;
+            case Native.WM_CLIPBOARDUPDATE: ClipboardChanged?.Invoke(); return 0;
             case Win32.WM_RBUTTONUP: RightClicked?.Invoke(); return 0;
 
             case Win32.WM_MOUSEWHEEL:
@@ -238,7 +245,7 @@ internal sealed class OverlayWindow : IDisposable
                 return 0;
 
             case Win32.WM_HOTKEY:
-                HotkeyPressed?.Invoke();
+                HotkeyPressed?.Invoke((int)wParam);
                 return 0;
 
             case Win32.WM_APP_WAKE:

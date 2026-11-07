@@ -79,6 +79,11 @@ english.AdditionalOptions=Additional options:
 english.CreateDesktopIcon=Create a desktop shortcut
 english.LaunchApp=Launch {#AppName}
 
+[InstallDelete]
+; Шрифты прежних версий: установщик поверх них сам ничего не удаляет.
+Type: files; Name: "{app}\Resources\Fonts\Inter-*"
+Type: files; Name: "{app}\Resources\Fonts\FiraSans-*"
+
 [Files]
 Source: "..\publish\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 

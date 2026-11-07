@@ -47,7 +47,10 @@ internal sealed class Island(Settings settings)
 
     public Vec2 NotchSize => new(settings.NotchWidth, settings.NotchHeight);
     public Vec2 RestSize => new(settings.RestWidth, settings.RestHeight);
-    public Vec2 ExpandedSize => new(settings.ExpandedWidth, settings.ExpandedHeight);
+    /// <summary>Размер раскрытого состояния, если его надо подменить (вкладка, карточка). Иначе из настроек.</summary>
+    public Vec2? ExpandedTarget { get; set; }
+
+    public Vec2 ExpandedSize => ExpandedTarget ?? new(settings.ExpandedWidth, settings.ExpandedHeight);
 
     public void SetMode(IslandMode mode) => Mode = mode;
 

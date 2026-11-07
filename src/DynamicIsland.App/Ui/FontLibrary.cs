@@ -9,7 +9,9 @@ namespace DynamicIsland.Ui;
 /// На маках Dynamic Island набран SF Pro, но он проприетарный: лицензия Apple
 /// разрешает использовать его только при разработке под платформы Apple, и
 /// вшить его в приложение для Windows нельзя. Общепринятая открытая замена —
-/// Inter под SIL Open Font License; оригинальный DynamicWin использовал именно её.
+/// Rubik (SIL Open Font License): мягкие скругления и полная кириллица.
+/// Оригинальный DynamicWin брал Inter — как и половина интерфейсов вокруг,
+/// а этот выбор сделан сознательно.
 ///
 /// Начертания статические, поэтому насыщенность берётся честно из файла, а не
 /// подделывается: вытащить конкретный вес из вариативного шрифта SkiaSharp 4
@@ -24,19 +26,19 @@ internal static class FontLibrary
     private static readonly Dictionary<string, SKTypeface?> Cache = [];
 
     /// <summary>Обычное начертание — основной текст островка.</summary>
-    public static SKTypeface Regular => Load("Inter-Regular.ttf", SKFontStyleWeight.Normal);
+    public static SKTypeface Regular => Load("Rubik-Regular.ttf", SKFontStyleWeight.Normal);
 
     /// <summary>
     /// Полужирное — время и название трека. Именно SemiBold, а не более
     /// тяжёлые начертания: на маках строка состояния набрана этим весом,
     /// ExtraBold рядом с обычным текстом выглядит грубо.
     /// </summary>
-    public static SKTypeface Bold => Load("Inter-SemiBold.ttf", SKFontStyleWeight.SemiBold);
+    public static SKTypeface Bold => Load("Rubik-SemiBold.ttf", SKFontStyleWeight.SemiBold);
 
     /// <summary>
     /// Шрифт по имени семейства из системы. Нужен, чтобы можно было указать
     /// свой — например SF Pro, если пользователь установил его сам.
-    /// Пустое имя или отсутствие шрифта — вернётся вшитый Inter.
+    /// Пустое имя или отсутствие шрифта — вернётся вшитый Rubik.
     /// </summary>
     public static SKTypeface FromFamilyOrDefault(string? family, bool bold)
     {

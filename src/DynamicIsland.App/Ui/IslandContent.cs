@@ -1,4 +1,5 @@
 using DynamicIsland.Configuration;
+using DynamicIsland.Features;
 using DynamicIsland.Services;
 using SkiaSharp;
 
@@ -16,12 +17,61 @@ internal sealed class IslandContent : IDisposable
 {
     private readonly Settings _settings;
 
-    private static readonly SKColor Border = new(255, 255, 255, 28);
-    private static readonly SKColor TextPrimary = new(245, 245, 247, 255);
-    private static readonly SKColor TextMuted = new(150, 150, 158, 255);
+    private Palette _pal = Palette.Dark;
+    private SKColor Border => _pal.Line;
+    private SKColor TextPrimary => _pal.Primary;
+    private SKColor TextMuted => _pal.Muted;
 
-    private SKColor Background => new(_settings.BackgroundColor);
-    private SKColor Accent => new(_settings.AccentColor);
+    /// <summary>Светлая тема островка (по настройке или по теме Windows).</summary>
+    public bool Light { get; private set; }
+
+    private SKColor Background => Light ? new SKColor(0xF2, 0xF4, 0xF7) : new SKColor(_settings.BackgroundColor);
+    /// <summary>Главный цвет обложки играющего трека. Ставит вызывающий; null — обложки нет.</summary>
+    public SKColor? ArtAccent { get; set; }
+
+    private static readonly SKColor Ink = new(0xF0, 0xED, 0xE6);
+
+    private SKColor Accent =>
+        !_settings.AccentFromArt ? new SKColor(_settings.AccentColor)
+        : ArtAccent ?? (Light ? new SKColor(0x1E, 0x1C, 0x18) : Ink);
+
+    // ---------- 2.0: вкладки ----------
+
+    public static readonly string[] TabGlyphs =
+        [G.Home, G.Clipboard, G.Folder, G.Text, G.Notes, G.Settings, G.Cloud, G.Crop];
+
+    public static readonly string[] TabNames =
+        ["Главная", "Буфер", "Полка", "Текст", "Заметки", "Управление", "Погода", "Инструменты"];
+
+    public UiKit Ui { get; }
+
+    /// <summary>Чипы и карточки событий. Ставит вызывающий.</summary>
+    public PillHub? Hub { get; set; }
+
+    /// <summary>Вкладки панели; нулевая («Главная») рисуется самим островком.</summary>
+    public ITabView?[] Views { get; } = new ITabView?[8];
+
+    private int _activeTab;
+    public int ActiveTab
+    {
+        get => _activeTab;
+        set
+        {
+            value = Math.Clamp(value, 0, Views.Length - 1);
+            if (value == _activeTab) return;
+            _activeTab = value;
+            Views[value]?.Activated();
+        }
+    }
+
+    /// <summary>Курсор в физических пикселях сцены. Ставит вызывающий.</summary>
+    public SKPoint CursorPhys { get; set; }
+
+    /// <summary>Левая кнопка зажата. Ставит вызывающий.</summary>
+    public bool MouseDown { get => Ui.MouseDown; set => Ui.MouseDown = value; }
+
+    /// <summary>Подсказка поверх вкладок: что сейчас играет, чьи слова и т. п. Рисуется на «Главной».</summary>
+    public Func<string?>? LyricLine { get; set; }
 
     private readonly SKPaint _fill = new() { Style = SKPaintStyle.Fill, IsAntialias = true };
     private readonly SKPaint _stroke = new() { Style = SKPaintStyle.Stroke, IsAntialias = true };
@@ -87,16 +137,35 @@ internal sealed class IslandContent : IDisposable
         var regular = FontLibrary.FromFamilyOrDefault(settings.FontFamily, bold: false);
         var bold = FontLibrary.FromFamilyOrDefault(settings.FontFamily, bold: true);
 
-        _fontClock = new SKFont(bold, 15) { Subpixel = true, Edging = SKFontEdging.SubpixelAntialias };
-        _fontMeta = new SKFont(regular, 12) { Subpixel = true, Edging = SKFontEdging.SubpixelAntialias };
-        _fontTitle = new SKFont(bold, 14) { Subpixel = true, Edging = SKFontEdging.SubpixelAntialias };
-        _fontSmall = new SKFont(regular, 12) { Subpixel = true, Edging = SKFontEdging.SubpixelAntialias };
+        _fontClock = new SKFont(bold, 15) { Subpixel = true, Edging = SKFontEdging.Antialias };
+        _fontMeta = new SKFont(regular, 12) { Subpixel = true, Edging = SKFontEdging.Antialias };
+        _fontTitle = new SKFont(bold, 14) { Subpixel = true, Edging = SKFontEdging.Antialias };
+        _fontSmall = new SKFont(regular, 12) { Subpixel = true, Edging = SKFontEdging.Antialias };
+
+        Ui = new UiKit(settings.FontFamily);
+    }
+
+    private void UpdateTheme()
+    {
+        Light = _settings.Theme switch
+        {
+            Configuration.IslandTheme.Light => true,
+            Configuration.IslandTheme.System => ThemeProbe.AppsUseLightTheme(),
+            _ => false,
+        };
+        _pal = Light ? Palette.Light : Palette.Dark;
+        Ui.Pal = _pal;
+        Ui.Accent = Accent;
+        Ui.IconTint = _settings.IconColor != 0 ? new SKColor(_settings.IconColor) : null;
     }
 
     public void Draw(SKCanvas canvas, Island island, float stageWidth, float stageHeight, float scale,
                      MediaSnapshot media, SKImage? artwork, PowerSnapshot power)
     {
         if (island.Visibility <= 0.01f) return;
+
+        UpdateTheme();
+        Ui.NewFrame();
 
         var rect = island.GetRect(stageWidth, stageHeight, scale);
         var radius = island.GetRadius(rect, scale);
@@ -107,6 +176,7 @@ internal sealed class IslandContent : IDisposable
         if (island.Mode == IslandMode.Notch || island.Mode == IslandMode.Hidden)
         {
             _controlsVisible = false;
+            if (island.Mode == IslandMode.Notch) DrawNotchInfo(canvas, rect, scale, media, alpha);
             return;
         }
 
@@ -126,6 +196,49 @@ internal sealed class IslandContent : IDisposable
         canvas.RestoreToCount(saved);
     }
 
+    /// <summary>
+    /// Полоска у края не пустая: тонкая линия внутри показывает, что происходит.
+    /// Играет музыка — ход трека; идёт запись — красная пульсация; тикает таймер — оранжевая.
+    /// Если ничего не происходит, полоска остаётся гладкой.
+    /// </summary>
+    private void DrawNotchInfo(SKCanvas canvas, SKRect rect, float scale, MediaSnapshot media, float alpha)
+    {
+        var chips = Hub?.TopChips(8) ?? [];
+        var rec = chips.FirstOrDefault(c => c.Key is "rec" or "obsrec" or "obslive");
+        var timer = chips.FirstOrDefault(c => c.Key == "timer");
+
+        var h = Math.Max(1.5f, 2f * scale);
+        var inset = rect.Height * 0.5f;
+        var track = new SKRect(rect.Left + inset, rect.MidY - h / 2f, rect.Right - inset, rect.MidY + h / 2f);
+        if (track.Width < 8f) return;
+
+        SKColor color;
+        float fill;
+        if (rec is not null)
+        {
+            var k = 0.5f + 0.5f * MathF.Sin(MusicPhase * 4.2f);
+            color = new SKColor(255, 69, 58, (byte)(255 * (0.45f + 0.55f * k)));
+            fill = 1f;
+        }
+        else if (timer is not null)
+        {
+            color = new SKColor(255, 159, 10);
+            fill = 1f;
+        }
+        else if (media.HasSession && media.IsPlaying && media.HasTimeline)
+        {
+            color = Accent;
+            fill = Math.Clamp(media.Progress, 0f, 1f);
+        }
+        else return;
+
+        _fill.Color = new SKColor(255, 255, 255, (byte)(alpha * 38));
+        canvas.DrawRoundRect(track, h / 2f, h / 2f, _fill);
+
+        _fill.Color = color.WithAlpha((byte)(color.Alpha * alpha));
+        canvas.DrawRoundRect(new SKRect(track.Left, track.Top, track.Left + track.Width * fill, track.Bottom), h / 2f, h / 2f, _fill);
+    }
+
     private void DrawShell(SKCanvas canvas, SKRect rect, float radius, float scale,
                            IslandMode mode, float alpha)
     {
@@ -138,7 +251,7 @@ internal sealed class IslandContent : IDisposable
             var strength = _settings.ShadowStrength;
             EnsureShadowFilter((mode == IslandMode.Expanded ? 26f : 9f) * strength * scale);
 
-            var shadowAlpha = alpha * (mode == IslandMode.Expanded ? 160 : 95) * Math.Min(1f, strength);
+            var shadowAlpha = alpha * (mode == IslandMode.Expanded ? 140 : 70) * Math.Min(1f, strength);
             _shadow.Color = new SKColor(0, 0, 0, (byte)Math.Clamp(shadowAlpha, 0f, 255f));
             _shadow.ImageFilter = _shadowFilter;
             canvas.DrawRoundRect(round, _shadow);
@@ -148,9 +261,14 @@ internal sealed class IslandContent : IDisposable
         _fill.Color = Background.WithAlpha((byte)(alpha * 255));
         canvas.DrawRoundRect(round, _fill);
 
-        _stroke.StrokeWidth = 1.25f * scale;
-        _stroke.Color = Border.WithAlpha((byte)(alpha * Border.Alpha));
-        canvas.DrawRoundRect(round, _stroke);
+        // Контура нет: чёрная капсула на чёрном экране с рамкой читается как наклейка.
+        // Он нужен только светлой теме, где форму держит сам цвет.
+        if (Light)
+        {
+            _stroke.StrokeWidth = 1f * scale;
+            _stroke.Color = Border.WithAlpha((byte)(alpha * Border.Alpha));
+            canvas.DrawRoundRect(round, _stroke);
+        }
     }
 
     /// <summary>Компактный вид: часы слева, заряд или индикатор плеера справа.</summary>
@@ -162,32 +280,168 @@ internal sealed class IslandContent : IDisposable
         var pad = 16f * scale;
         var midY = rect.MidY + 5f * scale;
         var a = (byte)(alpha * 255);
+        var gap = 12f * scale;
 
+        var left = rect.Left + pad;
         if (_settings.ShowClock)
         {
             _fontClock.Size = 15f * scale;
             _text.Color = TextPrimary.WithAlpha(a);
-            canvas.DrawText(ClockText(), rect.Left + pad, midY, SKTextAlign.Left, _fontClock, _text);
+            var clock = ClockText();
+            canvas.DrawText(clock, left, midY, SKTextAlign.Left, _fontClock, _text);
+            left += _fontClock.MeasureText(clock) + gap;
         }
 
         _fontMeta.Size = 12f * scale;
 
-        // Справа показываем самое актуальное: играющую музыку, иначе заряд,
-        // иначе дату. Что именно доступно — решают настройки.
-        if (_settings.ShowEqualizer && media.HasSession && media.IsPlaying)
+        // Справа показываем то, что помещается. Порядок важности: события (таймер, запись,
+        // микрофон…), затем музыка, иначе заряд, иначе дата. Что не влезает рядом с часами —
+        // не рисуется вовсе, чтобы ничего не наезжало друг на друга.
+        var rightEdge = rect.Right - pad;
+        var playing = _settings.ShowEqualizer && media.HasSession && media.IsPlaying;
+        var room = rightEdge - left;
+        var x = rightEdge;
+        var drawn = 0;
+
+        if (Hub is not null)
         {
-            DrawEqualizer(canvas, rect.Right - pad, rect.MidY, scale, alpha);
+            foreach (var chip in Hub.TopChips(3).Where(c => !(playing && c.Key == "weather")).Take(2))
+            {
+                var w = ChipWidth(chip) * scale;
+                if (w > room) continue;
+
+                Ui.Begin(canvas, rect, scale, alpha, CursorPhys);
+                var leftLogical = DrawChip(chip, (x - rect.Left) / scale, Ui.Height / 2f);
+                Ui.End();
+
+                x = rect.Left + leftLogical * scale - gap;
+                room = x - left;
+                drawn++;
+            }
+        }
+
+        if (drawn >= 2) return;
+
+        if (playing)
+        {
+            var eqW = EqualizerWidth(scale);
+            if (eqW <= room) DrawEqualizer(canvas, x, rect.MidY, scale, alpha);
         }
         else if (_settings.ShowBattery && power.HasBattery)
         {
-            DrawBatteryLabel(canvas, rect.Right - pad, midY, scale, power, a);
+            _fontMeta.Size = 12f * scale;
+            var w = _fontMeta.MeasureText($"{power.Percent}") + 6f * scale + 16f * scale;
+            if (w <= room) DrawBatteryLabel(canvas, x, midY, scale, power, a);
         }
-        else if (_settings.ShowDate)
+        else if (_settings.ShowDate && drawn == 0)
         {
-            _text.Color = TextMuted.WithAlpha(a);
-            canvas.DrawText(DateTime.Now.ToString("ddd, d MMM"), rect.Right - pad, midY,
-                SKTextAlign.Right, _fontMeta, _text);
+            var date = DateTime.Now.ToString("ddd, d MMM");
+            if (_fontMeta.MeasureText(date) <= room)
+            {
+                _text.Color = TextMuted.WithAlpha(a);
+                canvas.DrawText(date, x, midY, SKTextAlign.Right, _fontMeta, _text);
+            }
         }
+
+        // Слова песни — в оставшемся промежутке, только если он заметный.
+        if (_settings.ShowClock && media.HasSession && media.IsPlaying &&
+            LyricLine?.Invoke() is { Length: > 0 } lyric)
+        {
+            var used = rightEdge - x + (playing ? EqualizerWidth(scale) + gap : 0f);
+            var max = rightEdge - used - left;
+            if (max > 60f * scale)
+            {
+                _fontMeta.Size = 11f * scale;
+                _text.Color = Accent.WithAlpha(a);
+                canvas.DrawText(Truncate(lyric, _fontMeta, max), left, midY, SKTextAlign.Left, _fontMeta, _text);
+            }
+        }
+    }
+
+    /// <summary>Ширина чипа в логических пикселях.</summary>
+    private float ChipWidth(Chip chip) =>
+        (chip.Text.Length > 0 ? Ui.Measure(chip.Text, 12f, true) + 5f : 0f) + (chip.Glyph.Length > 0 ? 13f : 0f);
+
+    private static float EqualizerWidth(float scale) =>
+        (BarSpeeds.Length * 3f + (BarSpeeds.Length - 1) * 3.5f) * scale;
+
+    /// <summary>Чип справа налево: значок и текст. Возвращает левый край.</summary>
+    private float DrawChip(Chip chip, float rightX, float centerY)
+    {
+        var color = chip.Color ?? Accent;
+        if (chip.Pulse)
+        {
+            var k = 0.55f + 0.45f * MathF.Sin(MusicPhase * 4.2f);
+            color = color.WithAlpha((byte)(255 * k));
+        }
+
+        var textW = chip.Text.Length > 0 ? Ui.Measure(chip.Text, 12f, true) : 0f;
+        var x = rightX;
+        if (textW > 0)
+        {
+            Ui.Text(chip.Text, x, centerY + 4.2f, 12f, chip.Pulse ? _pal.Primary : color, SKTextAlign.Right, true);
+            x -= textW + 5f;
+        }
+        if (chip.Glyph.Length > 0)
+        {
+            Ui.Glyph(chip.Glyph, x - 6f, centerY, 13f, color);
+            x -= 13f;
+        }
+        return x;
+    }
+
+    /// <summary>Карточка события вместо привычного содержимого развёрнутого островка.</summary>
+    private void DrawCard(SKCanvas canvas, SKRect rect, float scale, float alpha, Card card)
+    {
+        Ui.Begin(canvas, rect, scale, alpha, CursorPhys);
+        var w = Ui.Width;
+        var h = Ui.Height;
+        var tint = card.Tint ?? Accent;
+        var hub = Hub;
+
+        var hasButtons = card.Buttons.Count > 0;
+        var bodyH = hasButtons ? h - 40f : h;
+
+        // Тело карточки целиком кликабельно.
+        if (card.OnClick is not null)
+            Ui.Hit(new SKRect(0, 0, w, bodyH), () => { card.OnClick(); hub?.Dismiss(); });
+
+        // Слева полоса цвета события; у снимка — миниатюра. Значок без круглой подложки.
+        Ui.RoundRect(new SKRect(0, 14f, 3f, bodyH - 14f), 1.5f, tint);
+        var iconBox = new SKRect(22f, bodyH / 2f - 24f, 70f, bodyH / 2f + 24f);
+        if (card.Image is not null)
+            Ui.Image(card.Image, iconBox, 6f);
+        else
+            Ui.Glyph(card.Glyph, iconBox.Left + 12f, iconBox.MidY, 22f, tint);
+
+        var tx = (card.Image is not null ? iconBox.Right : iconBox.Left + 34f) + 12f;
+        var tw = w - tx - 16f;
+        var titleY = card.Subtitle.Length > 0 || card.Progress is not null ? bodyH / 2f - 4f : bodyH / 2f + 5f;
+        Ui.Text(Ui.Fit(card.Title, 14.5f, tw, bold: true), tx, titleY, 14.5f, _pal.Primary, bold: true);
+        if (card.Subtitle.Length > 0)
+            Ui.Text(Ui.Fit(card.Subtitle, 12f, tw), tx, titleY + 18f, 12f, _pal.Muted);
+
+        if (card.Progress is { } p)
+        {
+            var bar = new SKRect(tx, bodyH / 2f + 12f, tx + tw, bodyH / 2f + 16f);
+            Ui.RoundRect(bar, 2f, _pal.Hover);
+            Ui.RoundRect(new SKRect(bar.Left, bar.Top, bar.Left + bar.Width * Math.Clamp(p, 0f, 1f), bar.Bottom), 2f, tint);
+        }
+
+        if (hasButtons)
+        {
+            var bw = 88f;
+            var x = w - 16f;
+            for (var i = card.Buttons.Count - 1; i >= 0; i--)
+            {
+                var b = card.Buttons[i];
+                var r = new SKRect(x - bw, h - 36f, x, h - 10f);
+                Ui.Button(r, b.Label, () => { b.Click(); hub?.Dismiss(); }, primary: b.Primary);
+                x -= bw + 8f;
+            }
+        }
+
+        Ui.End();
     }
 
     private string ClockText() => DateTime.Now.ToString(_settings.Use24HourClock ? "HH:mm" : "h:mm tt");
@@ -202,23 +456,26 @@ internal sealed class IslandContent : IDisposable
         var pad = 16f * scale;
         var a = (byte)(alpha * 255);
 
-        // Верхняя строка: часы и дата слева, заряд справа.
-        _fontMeta.Size = 11.5f * scale;
-        _text.Color = TextMuted.WithAlpha(a);
-
-        var header = (_settings.ShowClock, _settings.ShowDate) switch
+        if (Hub?.Current is { } card)
         {
-            (true, true) => ClockText() + DateTime.Now.ToString("  ddd, d MMM"),
-            (true, false) => ClockText(),
-            (false, true) => DateTime.Now.ToString("ddd, d MMM"),
-            _ => "",
-        };
-        if (header.Length > 0)
-            canvas.DrawText(header, rect.Left + pad, rect.Top + 22f * scale,
-                SKTextAlign.Left, _fontMeta, _text);
+            DrawCard(canvas, rect, scale, alpha, card);
+            return;
+        }
 
-        if (_settings.ShowBattery)
-            DrawBatteryLabel(canvas, rect.Right - pad, rect.Top + 22f * scale, scale, power, a);
+        DrawTabStrip(canvas, rect, scale, alpha, power);
+
+        // Полоса перемотки есть только на «Главной»: на других вкладках её зона не должна ловить нажатия.
+        if (ActiveTab != 0) { SeekHitRect = SKRect.Empty; _seekTrack = SKRect.Empty; }
+
+        // Остальные вкладки рисуют себя сами в отведённой области.
+        if (ActiveTab != 0 && Views[ActiveTab] is { } view)
+        {
+            var area = new SKRect(rect.Left + pad, rect.Top + 44f * scale, rect.Right - pad, rect.Bottom - 12f * scale);
+            Ui.Begin(canvas, area, scale, alpha, CursorPhys);
+            view.Draw(Ui);
+            Ui.End();
+            return;
+        }
 
         // Обложка слева, кнопки справа, текст между ними. Нижние края обложки и
         // кнопок совпадают — это задаёт нижнюю границу содержимого.
@@ -246,6 +503,15 @@ internal sealed class IslandContent : IDisposable
             _text.Color = TextMuted.WithAlpha(a);
             canvas.DrawText(Truncate(media.Artist, _fontSmall, available), textLeft,
                 artTop + 44f * scale, SKTextAlign.Left, _fontSmall, _text);
+
+            // Строка песни в такт музыке.
+            if (media.IsPlaying && LyricLine?.Invoke() is { Length: > 0 } lyric)
+            {
+                _fontSmall.Size = 11f * scale;
+                _text.Color = Accent.WithAlpha(a);
+                canvas.DrawText(Truncate(lyric, _fontSmall, available), textLeft,
+                    artTop + 60f * scale, SKTextAlign.Left, _fontSmall, _text);
+            }
         }
         else
         {
@@ -256,6 +522,61 @@ internal sealed class IslandContent : IDisposable
         }
 
         DrawSeekBar(canvas, rect, scale, media, alpha);
+    }
+
+    private string EmojiFor(int index)
+    {
+        var parts = _settings.TabEmoji.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        return index < parts.Length ? parts[index] : TabGlyphs[index];
+    }
+
+    /// <summary>Верхняя строка: вкладки слева, часы и заряд справа.</summary>
+    private void DrawTabStrip(SKCanvas canvas, SKRect rect, float scale, float alpha, PowerSnapshot power)
+    {
+        var area = new SKRect(rect.Left, rect.Top, rect.Right, rect.Top + 40f * scale);
+        Ui.Begin(canvas, area, scale, alpha, CursorPhys);
+
+        const float tabW = 28f, tabH = 26f, left = 14f;
+        for (var i = 0; i < TabGlyphs.Length; i++)
+        {
+            var r = new SKRect(left + i * tabW, 7f, left + (i + 1) * tabW - 2f, 7f + tabH);
+            var index = i;
+            if (_settings.TabStyle == Configuration.TabStyle.Emoji)
+            {
+                var emoji = EmojiFor(i);
+                var active = i == ActiveTab;
+                if (active) Ui.RoundRect(r, 8f, _pal.Surface);
+                Ui.Emoji(emoji, r.MidX, r.MidY, 15f, active || Ui.IsHover(r) ? 1f : 0.62f);
+                Ui.Hit(r, () => ActiveTab = index);
+            }
+            else
+            {
+                Ui.IconButton(r, TabGlyphs[i], () => ActiveTab = index, active: i == ActiveTab);
+            }
+        }
+
+        // Часы справа — только если хватает места.
+        var rightX = Ui.Width - 16f;
+        if (Ui.Width >= 420f)
+        {
+            if (_settings.ShowBattery && power.HasBattery)
+            {
+                var label = $"{power.Percent}%";
+                Ui.Text(label, rightX, 25f, 11.5f, power.IsCharging ? Accent : _pal.Muted, SKTextAlign.Right);
+                rightX -= Ui.Measure(label, 11.5f) + 10f;
+            }
+
+            var header = (_settings.ShowClock, _settings.ShowDate) switch
+            {
+                (true, true) => ClockText() + DateTime.Now.ToString("  ddd, d MMM"),
+                (true, false) => ClockText(),
+                (false, true) => DateTime.Now.ToString("ddd, d MMM"),
+                _ => "",
+            };
+            if (header.Length > 0) Ui.Text(header, rightX, 25f, 11.5f, _pal.Muted, SKTextAlign.Right);
+        }
+
+        Ui.End();
     }
 
     /// <summary>
@@ -462,20 +783,27 @@ internal sealed class IslandContent : IDisposable
     {
         if (!power.HasBattery) return;
 
-        var label = $"{power.Percent}%";
-        var color = power.IsCharging ? Accent : TextMuted;
+        var charging = power.IsCharging;
+        var color = charging ? Accent : TextMuted;
 
+        // Число и тонкая шкала: заряд читается по длине линии, а не по тексту.
+        var label = $"{power.Percent}";
         _text.Color = color.WithAlpha(alpha);
         canvas.DrawText(label, rightX, baselineY, SKTextAlign.Right, _fontMeta, _text);
 
-        if (!power.IsCharging) return;
+        var textW = _fontMeta.MeasureText(label);
+        var gaugeW = 16f * scale;
+        var gaugeH = 3f * scale;
+        var gx = rightX - textW - 6f * scale - gaugeW;
+        var gy = baselineY - _fontMeta.Size * 0.32f - gaugeH / 2f;
 
-        var boltSize = _fontMeta.Size * 0.85f;
-        var textWidth = _fontMeta.MeasureText(label);
-        var boltLeft = rightX - textWidth - 3f * scale - boltSize;
+        _fill.Color = Light ? new SKColor(0, 0, 0, (byte)(alpha * 0.16f)) : new SKColor(255, 255, 255, (byte)(alpha * 0.18f));
+        canvas.DrawRoundRect(new SKRect(gx, gy, gx + gaugeW, gy + gaugeH), gaugeH / 2f, gaugeH / 2f, _fill);
 
-        _fill.Color = color.WithAlpha(alpha);
-        DrawIcon(canvas, _iconBolt, SKRect.Create(boltLeft, baselineY - boltSize * 0.85f, boltSize, boltSize));
+        var low = !charging && power.Percent <= 20;
+        _fill.Color = (low ? new SKColor(255, 105, 97) : color).WithAlpha(alpha);
+        canvas.DrawRoundRect(new SKRect(gx, gy, gx + gaugeW * Math.Clamp(power.Percent / 100f, 0.04f, 1f), gy + gaugeH),
+            gaugeH / 2f, gaugeH / 2f, _fill);
     }
 
     /// <summary>Восьмая нота в единичных координатах — заглушка для обложки.</summary>
@@ -515,7 +843,8 @@ internal sealed class IslandContent : IDisposable
     /// </summary>
     private void DrawEqualizer(SKCanvas canvas, float rightX, float centerY, float scale, float alpha)
     {
-        _fill.Color = Accent.WithAlpha((byte)(alpha * 255));
+        var eq = _settings.EqualizerColor != 0 ? new SKColor(_settings.EqualizerColor) : Accent;
+        _fill.Color = eq.WithAlpha((byte)(alpha * 255));
 
         var w = 3f * scale;
         var gap = 3.5f * scale;
@@ -560,7 +889,7 @@ internal sealed class IslandContent : IDisposable
     /// <summary>Какая кнопка под точкой (физические пиксели сцены).</summary>
     public IslandButton HitButton(float x, float y)
     {
-        if (!_controlsVisible) return IslandButton.None;
+        if (!_controlsVisible || ActiveTab != 0) return IslandButton.None;
         if (_btnPlay.Contains(x, y)) return IslandButton.PlayPause;
         if (_btnNext.Contains(x, y)) return IslandButton.Next;
         if (_btnPrev.Contains(x, y)) return IslandButton.Previous;
@@ -585,5 +914,6 @@ internal sealed class IslandContent : IDisposable
         _iconPrevious.Dispose();
         _iconNote.Dispose();
         _iconBolt.Dispose();
+        Ui.Dispose();
     }
 }

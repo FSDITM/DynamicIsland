@@ -4,9 +4,9 @@
         Title="DynamicIsland"
         Width="860" Height="660" MinWidth="760" MinHeight="560"
         WindowStartupLocation="CenterScreen"
-        Background="#FF101014"
-        Foreground="#FFF2F2F5"
-        TextElement.Foreground="#FFF2F2F5"
+        Background="#FF0D0C0B"
+        Foreground="#FFF0EDE6"
+        TextElement.Foreground="#FFF0EDE6"
         TextOptions.TextFormattingMode="Display"
         TextOptions.TextRenderingMode="ClearType"
         UseLayoutRounding="True"
@@ -24,17 +24,17 @@
     <Window.Resources>
 
         <!-- ============ Палитра ============ -->
-        <SolidColorBrush x:Key="Bg"        Color="#FF101014"/>
-        <SolidColorBrush x:Key="Sidebar"   Color="#FF17171D"/>
-        <SolidColorBrush x:Key="Card"      Color="#FF1C1C23"/>
-        <SolidColorBrush x:Key="CardHover" Color="#FF23232B"/>
-        <SolidColorBrush x:Key="Fg"        Color="#FFF2F2F5"/>
+        <SolidColorBrush x:Key="Bg"        Color="#FF0D0C0B"/>
+        <SolidColorBrush x:Key="Sidebar"   Color="#FF11100E"/>
+        <SolidColorBrush x:Key="Card"      Color="#00000000"/>
+        <SolidColorBrush x:Key="CardHover" Color="#FF1A1816"/>
+        <SolidColorBrush x:Key="Fg"        Color="#FFF0EDE6"/>
         <!-- Приглушённый текст был слишком тёмным для 12 пикселей: подсказки
              читались хуже, чем должны. -->
-        <SolidColorBrush x:Key="FgMuted"   Color="#FFA8A8B4"/>
-        <SolidColorBrush x:Key="Line"      Color="#FF2A2A33"/>
-        <SolidColorBrush x:Key="Accent"    Color="#FF0A84FF"/>
-        <SolidColorBrush x:Key="TrackOff"  Color="#FF3A3A44"/>
+        <SolidColorBrush x:Key="FgMuted"   Color="#FF9A958B"/>
+        <SolidColorBrush x:Key="Line"      Color="#FF2A2723"/>
+        <SolidColorBrush x:Key="Accent"    Color="#FFF0EDE6"/>
+        <SolidColorBrush x:Key="TrackOff"  Color="#FF38342E"/>
 
         <!-- ============ Типографика ============ -->
         <Style TargetType="TextBlock">
@@ -92,10 +92,10 @@
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="CheckBox">
-                        <Border x:Name="Track" Width="44" Height="26" CornerRadius="13"
+                        <Border x:Name="Track" Width="40" Height="20" CornerRadius="4"
                                 Background="{StaticResource TrackOff}">
-                            <Ellipse x:Name="Thumb" Width="20" Height="20" Fill="White"
-                                     HorizontalAlignment="Left" Margin="3,0,0,0"/>
+                            <Border x:Name="Thumb" Width="14" Height="14" CornerRadius="2" Background="#FF9A958B"
+                                    HorizontalAlignment="Left" Margin="3,0,0,0"/>
                         </Border>
                         <ControlTemplate.Triggers>
                             <!-- Положение задаётся отступом, а не сдвигом: сеттер к
@@ -104,21 +104,22 @@
                                  включённый до открытия окна, рисуется выключенным. -->
                             <Trigger Property="IsChecked" Value="True">
                                 <Setter TargetName="Track" Property="Background" Value="{StaticResource Accent}"/>
-                                <Setter TargetName="Thumb" Property="Margin" Value="21,0,0,0"/>
+                                <Setter TargetName="Thumb" Property="Margin" Value="23,0,0,0"/>
+                                <Setter TargetName="Thumb" Property="Background" Value="#FF0D0C0B"/>
 
                                 <Trigger.EnterActions>
                                     <BeginStoryboard>
                                         <Storyboard>
                                             <ThicknessAnimation Storyboard.TargetName="Thumb"
                                                                 Storyboard.TargetProperty="Margin"
-                                                                To="21,0,0,0" Duration="0:0:0.16">
+                                                                To="23,0,0,0" Duration="0:0:0.16">
                                                 <ThicknessAnimation.EasingFunction>
                                                     <CubicEase EasingMode="EaseOut"/>
                                                 </ThicknessAnimation.EasingFunction>
                                             </ThicknessAnimation>
                                             <ColorAnimation Storyboard.TargetName="Track"
                                                             Storyboard.TargetProperty="Background.Color"
-                                                            To="#FF0A84FF" Duration="0:0:0.16"/>
+                                                            To="#FFF0EDE6" Duration="0:0:0.16"/>
                                         </Storyboard>
                                     </BeginStoryboard>
                                 </Trigger.EnterActions>
@@ -134,7 +135,7 @@
                                             </ThicknessAnimation>
                                             <ColorAnimation Storyboard.TargetName="Track"
                                                             Storyboard.TargetProperty="Background.Color"
-                                                            To="#FF3A3A44" Duration="0:0:0.16"/>
+                                                            To="#FF38342E" Duration="0:0:0.16"/>
                                         </Storyboard>
                                     </BeginStoryboard>
                                 </Trigger.ExitActions>
@@ -201,7 +202,7 @@
         <Style TargetType="TextBox">
             <Setter Property="HorizontalContentAlignment" Value="Left"/>
             <Setter Property="VerticalContentAlignment" Value="Center"/>
-            <Setter Property="Background" Value="#FF26262E"/>
+            <Setter Property="Background" Value="#FF171513"/>
             <Setter Property="Foreground" Value="{StaticResource Fg}"/>
             <Setter Property="CaretBrush" Value="{StaticResource Fg}"/>
             <Setter Property="BorderThickness" Value="0"/>
@@ -210,7 +211,7 @@
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="TextBox">
-                        <Border Background="{TemplateBinding Background}" CornerRadius="8">
+                        <Border Background="{TemplateBinding Background}" CornerRadius="4">
                             <ScrollViewer x:Name="PART_ContentHost" Margin="{TemplateBinding Padding}"/>
                         </Border>
                     </ControlTemplate>
@@ -226,7 +227,7 @@
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="ComboBoxItem">
-                        <Border x:Name="Bd" Background="Transparent" CornerRadius="6"
+                        <Border x:Name="Bd" Background="Transparent" CornerRadius="3"
                                 Padding="{TemplateBinding Padding}" Margin="4,1">
                             <ContentPresenter/>
                         </Border>
@@ -260,7 +261,7 @@
                                           IsChecked="{Binding IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}">
                                 <ToggleButton.Template>
                                     <ControlTemplate TargetType="ToggleButton">
-                                        <Border x:Name="Bd" Background="#FF26262E" CornerRadius="8" Padding="10,7">
+                                        <Border x:Name="Bd" Background="#FF171513" CornerRadius="4" Padding="10,7">
                                             <Grid>
                                                 <ContentPresenter x:Name="Content" Margin="0,0,18,0"
                                                                   HorizontalAlignment="Left"
@@ -272,7 +273,7 @@
                                         </Border>
                                         <ControlTemplate.Triggers>
                                             <Trigger Property="IsMouseOver" Value="True">
-                                                <Setter TargetName="Bd" Property="Background" Value="#FF31313B"/>
+                                                <Setter TargetName="Bd" Property="Background" Value="#FF22201C"/>
                                             </Trigger>
                                         </ControlTemplate.Triggers>
                                     </ControlTemplate>
@@ -282,7 +283,7 @@
 
                             <Popup IsOpen="{TemplateBinding IsDropDownOpen}" Placement="Bottom"
                                    AllowsTransparency="True" PopupAnimation="Fade" Focusable="False">
-                                <Border Background="#FF25252D" CornerRadius="10" Margin="0,4,0,0"
+                                <Border Background="#FF171513" CornerRadius="4" Margin="0,4,0,0"
                                         MinWidth="{TemplateBinding ActualWidth}">
                                     <Border.Effect>
                                         <DropShadowEffect BlurRadius="18" ShadowDepth="3" Opacity="0.5" Color="Black"/>
@@ -298,22 +299,24 @@
 
         <!-- ============ Кнопки ============ -->
         <Style x:Key="Action" TargetType="Button">
-            <Setter Property="Background" Value="#FF2A2A33"/>
+            <Setter Property="Background" Value="Transparent"/>
             <Setter Property="Foreground" Value="{StaticResource Fg}"/>
-            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="BorderBrush" Value="#FF38342E"/>
             <Setter Property="Padding" Value="16,9"/>
             <Setter Property="FontSize" Value="14"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
-                        <Border x:Name="Bd" Background="{TemplateBinding Background}" CornerRadius="8"
+                        <Border x:Name="Bd" Background="{TemplateBinding Background}" CornerRadius="4"
+                                BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}"
                                 Padding="{TemplateBinding Padding}">
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="#FF3A3A45"/>
+                                <Setter TargetName="Bd" Property="Background" Value="#FF1F1D1A"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -323,6 +326,8 @@
 
         <Style x:Key="Primary" TargetType="Button" BasedOn="{StaticResource Action}">
             <Setter Property="Background" Value="{StaticResource Accent}"/>
+            <Setter Property="Foreground" Value="#FF0D0C0B"/>
+            <Setter Property="BorderBrush" Value="{StaticResource Accent}"/>
         </Style>
 
         <!-- ============ Боковое меню ============ -->
@@ -337,19 +342,21 @@
             <Setter Property="Foreground" Value="{StaticResource Fg}"/>
             <Setter Property="FontSize" Value="14"/>
             <Setter Property="Cursor" Value="Hand"/>
-            <Setter Property="Margin" Value="8,2"/>
+            <Setter Property="Margin" Value="0,1"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="ListBoxItem">
-                        <Border x:Name="Bd" Background="Transparent" CornerRadius="8" Padding="10,9">
+                        <Border x:Name="Bd" Background="Transparent" CornerRadius="0" Padding="18,9,10,9"
+                                BorderBrush="Transparent" BorderThickness="2,0,0,0">
                             <ContentPresenter VerticalAlignment="Center"/>
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="#FF22222A"/>
+                                <Setter TargetName="Bd" Property="Background" Value="#FF161513"/>
                             </Trigger>
                             <Trigger Property="IsSelected" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="{StaticResource Accent}"/>
+                                <Setter TargetName="Bd" Property="Background" Value="#FF1A1816"/>
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="{StaticResource Accent}"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -376,7 +383,7 @@
                                     <Thumb>
                                         <Thumb.Template>
                                             <ControlTemplate TargetType="Thumb">
-                                                <Border Background="#FF3A3A45" CornerRadius="3" Width="6"
+                                                <Border Background="#FF3A362F" CornerRadius="3" Width="6"
                                                         HorizontalAlignment="Center"/>
                                             </ControlTemplate>
                                         </Thumb.Template>
@@ -400,7 +407,7 @@
         <Border Grid.Column="0" Background="{StaticResource Sidebar}">
             <DockPanel>
                 <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="18,22,18,18">
-                    <Border Width="38" Height="38" CornerRadius="9" ClipToBounds="True">
+                    <Border Width="38" Height="38" CornerRadius="5" ClipToBounds="True">
                         <Image x:Name="AppLogo" Width="38" Height="38"/>
                     </Border>
                     <StackPanel Margin="11,0,0,0" VerticalAlignment="Center">

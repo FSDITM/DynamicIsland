@@ -47,77 +47,32 @@ internal static class IconGenerator
     {
         var rect = new SKRect(0, 0, size, size);
 
-        // Плитка со скруглением как у иконок системы.
+        // Плоская тёплая плитка: ни градиента, ни блика, ни свечения.
         var corner = size * 0.225f;
         using var tile = new SKRoundRect(rect, corner);
-
-        using (var background = new SKPaint { IsAntialias = true })
-        {
-            background.Shader = SKShader.CreateLinearGradient(
-                new SKPoint(0, 0), new SKPoint(size, size),
-                [new SKColor(0x5B, 0x8C, 0xFF), new SKColor(0x8B, 0x5C, 0xF6)],
-                [0f, 1f], SKShaderTileMode.Clamp);
+        using (var background = new SKPaint { IsAntialias = true, Color = new SKColor(0x16, 0x14, 0x11) })
             canvas.DrawRoundRect(tile, background);
-        }
 
-        // Блик по верхней кромке — иконка перестаёт выглядеть плоской заливкой.
-        using (var gloss = new SKPaint { IsAntialias = true })
-        {
-            gloss.Shader = SKShader.CreateLinearGradient(
-                new SKPoint(0, 0), new SKPoint(0, size * 0.55f),
-                [new SKColor(255, 255, 255, 64), new SKColor(255, 255, 255, 0)],
-                [0f, 1f], SKShaderTileMode.Clamp);
-            canvas.DrawRoundRect(tile, gloss);
-        }
-
-        // Сам островок.
-        //
-        // Он смещён в верхнюю треть, а не по центру: плитка читается как экран,
-        // а пилюля — как вырез у его верхней кромки. По центру и с крупным
-        // кружком у края фигура превращалась в тумблер из iOS.
+        // Светлая капсула в верхней трети — остров у кромки экрана.
         var pillWidth = size * 0.70f;
-        var pillHeight = size * (size < 32 ? 0.28f : 0.225f);
+        var pillHeight = size * (size < 32 ? 0.30f : 0.24f);
         var pill = SKRect.Create((size - pillWidth) / 2f, size * 0.40f - pillHeight / 2f, pillWidth, pillHeight);
         var pillRadius = pillHeight / 2f;
 
-        // Свечение под пилюлей: намёк, что островок светится поверх экрана.
-        if (size >= 32)
-        {
-            using var glow = new SKPaint
-            {
-                IsAntialias = true,
-                Color = new SKColor(0, 0, 0, 90),
-                ImageFilter = SKImageFilter.CreateBlur(size * 0.045f, size * 0.045f),
-            };
-            var glowRect = pill;
-            glowRect.Offset(0, size * 0.02f);
-            canvas.DrawRoundRect(new SKRoundRect(glowRect, pillRadius), glow);
-        }
-
-        using (var body = new SKPaint { IsAntialias = true, Color = new SKColor(0x0A, 0x0A, 0x0C) })
+        using (var body = new SKPaint { IsAntialias = true, Color = new SKColor(0xF0, 0xED, 0xE6) })
             canvas.DrawRoundRect(new SKRoundRect(pill, pillRadius), body);
 
-        // «Глазок» — объектив в вырезе. Маленький: стоит сделать его во всю
-        // высоту пилюли, и получается рукоятка тумблера.
-        if (size >= 32)
+        // Единственный цветной знак — красновато-оранжевая точка справа: «сейчас что-то происходит».
+        if (size >= 24)
         {
-            var lens = pillHeight * 0.23f;
-            var cx = pill.Right - pillHeight * 0.55f;
-            var cy = pill.MidY;
-
-            using var ring = new SKPaint { IsAntialias = true };
-            ring.Shader = SKShader.CreateRadialGradient(
-                new SKPoint(cx - lens * 0.3f, cy - lens * 0.3f), lens * 1.6f,
-                [new SKColor(0x6A, 0xA8, 0xFF), new SKColor(0x16, 0x2C, 0x63)],
-                [0f, 1f], SKShaderTileMode.Clamp);
-            canvas.DrawCircle(cx, cy, lens, ring);
+            using var dot = new SKPaint { IsAntialias = true, Color = new SKColor(0xFF, 0x6B, 0x4A) };
+            canvas.DrawCircle(pill.Right - pillHeight * 0.52f, pill.MidY, pillHeight * 0.20f, dot);
         }
 
-        // Три столбика слева — то, что островок показывает чаще всего.
-        // Заодно окончательно уводят силуэт от тумблера.
+        // Три столбика слева — то, что остров показывает чаще всего.
         if (size >= 48)
         {
-            using var bars = new SKPaint { IsAntialias = true, Color = new SKColor(0x7C, 0xC4, 0xFF) };
+            using var bars = new SKPaint { IsAntialias = true, Color = new SKColor(0x16, 0x14, 0x11) };
             var barWidth = pillHeight * 0.13f;
             var gap = barWidth * 1.5f;
             var x = pill.Left + pillHeight * 0.55f;
@@ -131,17 +86,6 @@ internal static class IconGenerator
                     barWidth / 2f, barWidth / 2f, bars);
                 x += barWidth + gap;
             }
-        }
-
-        // Намёк на экран под островком: мягкое свечение, как от подсветки.
-        if (size >= 64)
-        {
-            using var screenGlow = new SKPaint { IsAntialias = true };
-            screenGlow.Shader = SKShader.CreateRadialGradient(
-                new SKPoint(size / 2f, size * 0.78f), size * 0.42f,
-                [new SKColor(255, 255, 255, 46), new SKColor(255, 255, 255, 0)],
-                [0f, 1f], SKShaderTileMode.Clamp);
-            canvas.DrawRoundRect(tile, screenGlow);
         }
     }
 

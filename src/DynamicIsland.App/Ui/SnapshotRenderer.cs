@@ -34,6 +34,7 @@ internal static class SnapshotRenderer
                     "Исполнитель с длинным именем", "spotify",
                     TimeSpan.FromSeconds(190), TimeSpan.FromSeconds(248), 0, true), true),
             ("06-полоска", IslandMode.Notch, MediaSnapshot.Empty, false),
+            ("06b-полоска-играет", IslandMode.Notch, Playing("Bohemian Rhapsody", "Queen", 82, 355), true),
         };
 
         // Один из снимков делаем на зарядке, чтобы проверить молнию и акцентный цвет.
@@ -56,6 +57,16 @@ internal static class SnapshotRenderer
                 new MediaSnapshot(true, true, "", "", "spotify"), null, power, scale,
                 phase: 0.17f * (i + 1));
         }
+        // Узкий остров, музыка и чип VPN одновременно: лишнее должно пропасть, а не наехать.
+        foreach (var width in new[] { 120f, 140f, 170f, 250f })
+        {
+            var hub = new Features.PillHub();
+            hub.SetChip("vpn", new Features.Chip("vpn", G.Shield, "DE", new SKColor(52, 199, 89), Priority: 40));
+            Render(Path.Combine(directory, $"11-узкий-{width:0}.png"), IslandMode.Rest,
+                new MediaSnapshot(true, true, "Вали", "Канги", "spotify"), null, power, scale,
+                custom: new Configuration.Settings { RestWidth = width, RestHeight = 38, EqualizerColor = 0xFF30D158 }, hub: hub);
+        }
+
         using (var art = MakeFakeArtwork())
             Render(Path.Combine(directory, "08-раскрыт-зарядка.png"), IslandMode.Expanded,
                 new MediaSnapshot(true, true, "Дискотека Авария", "Заколебал ты", "spotify"),
@@ -77,25 +88,8 @@ internal static class SnapshotRenderer
         using var surface = SKSurface.Create(info);
         var canvas = surface.Canvas;
 
-        // Фон: тёмный вертикальный градиент.
-        using (var backdrop = new SKPaint())
-        {
-            backdrop.Shader = SKShader.CreateLinearGradient(
-                new SKPoint(0, 0), new SKPoint(0, height),
-                [new SKColor(0x16, 0x17, 0x20), new SKColor(0x08, 0x08, 0x0C)],
-                [0f, 1f], SKShaderTileMode.Clamp);
-            canvas.DrawRect(SKRect.Create(0, 0, width, height), backdrop);
-        }
-
-        // Свечение за островком — оно и создаёт ощущение, что он поверх экрана.
-        using (var glow = new SKPaint())
-        {
-            glow.Shader = SKShader.CreateRadialGradient(
-                new SKPoint(width / 2f, height * 0.42f), width * 0.42f,
-                [new SKColor(0x4A, 0x7C, 0xFF, 70), new SKColor(0x4A, 0x7C, 0xFF, 0)],
-                [0f, 1f], SKShaderTileMode.Clamp);
-            canvas.DrawRect(SKRect.Create(0, 0, width, height), glow);
-        }
+        // Фон плоский, тёплый чёрный: без свечения и градиента.
+        canvas.Clear(new SKColor(0x2A, 0x26, 0x20));
 
         var settings = new Configuration.Settings();
         var island = new Island(settings);
@@ -104,6 +98,7 @@ internal static class SnapshotRenderer
 
         using var content = new IslandContent(settings);
         using var art = MakeFakeArtwork();
+        content.ArtAccent = ArtColor.Dominant(art);
 
         var media = new MediaSnapshot(true, true, "Bohemian Rhapsody", "Queen", "spotify",
             TimeSpan.FromSeconds(82), TimeSpan.FromSeconds(355), 0, true);
@@ -129,7 +124,8 @@ internal static class SnapshotRenderer
 
     private static void Render(string path, IslandMode mode, MediaSnapshot media,
                                SKImage? artwork, PowerSnapshot power, float scale,
-                               IslandButton hovered = IslandButton.None, float phase = 0f)
+                               IslandButton hovered = IslandButton.None, float phase = 0f,
+                               Configuration.Settings? custom = null, Features.PillHub? hub = null)
     {
         var width = (int)(620 * scale);
         var height = (int)(210 * scale);
@@ -139,7 +135,7 @@ internal static class SnapshotRenderer
         using var surface = SKSurface.Create(info);
         var canvas = surface.Canvas;
 
-        var settings = new Configuration.Settings();
+        var settings = custom ?? new Configuration.Settings();
         var island = new Island(settings);
         island.SetMode(mode);
 
@@ -147,7 +143,8 @@ internal static class SnapshotRenderer
         // установившуюся форму, а не первый кадр анимации.
         for (var i = 0; i < 600; i++) island.Update(1f / 120f);
 
-        using var content = new IslandContent(settings) { MusicPhase = phase };
+        using var content = new IslandContent(settings) { MusicPhase = phase, Hub = hub };
+        if (artwork is not null) content.ArtAccent = ArtColor.Dominant(artwork);
 
         // Подсветка кнопки требует, чтобы её прямоугольники уже были посчитаны:
         // первый проход в никуда задаёт раскладку, второй рисует с подсветкой.
