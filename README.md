@@ -37,9 +37,20 @@ Direct3D 12 и ноль процессора в покое.</p>
 панель с вкладками — от плеера до снимков и командной строки. Когда мешает,
 сворачивается в тонкую полоску или исчезает совсем.
 
-<div align="center">
-  <img src="docs/tabs.png" alt="Вкладки панели: буфер, текст, заметки, управление, погода, инструменты" width="86%">
-</div>
+<table>
+<tr>
+<td width="50%"><img src="docs/tabs/clipboard.png" alt="Буфер обмена"><br><sub><b>Буфер.</b> История, закрепление, вставка кликом</sub></td>
+<td width="50%"><img src="docs/tabs/text.png" alt="Текстовые инструменты"><br><sub><b>Текст.</b> Раскладка, регистр, транслит, JSON, QR</sub></td>
+</tr>
+<tr>
+<td width="50%"><img src="docs/tabs/notes.png" alt="Заметки, таймер и напоминания"><br><sub><b>Заметки.</b> Таймер и напоминания рядом</sub></td>
+<td width="50%"><img src="docs/tabs/controls.png" alt="Управление системой"><br><sub><b>Управление.</b> Wi-Fi, Bluetooth, громкость, питание</sub></td>
+</tr>
+<tr>
+<td width="50%"><img src="docs/tabs/tools.png" alt="Снимки, пипетка, запись"><br><sub><b>Инструменты.</b> Снимок, текст и QR с экрана, запись</sub></td>
+<td width="50%"><img src="docs/tabs/shelf.png" alt="Полка для файлов"><br><sub><b>Полка.</b> Бросьте файл и достаньте где нужно</sub></td>
+</tr>
+</table>
 
 ## Возможности
 
