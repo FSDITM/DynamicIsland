@@ -21,15 +21,24 @@ internal sealed class Card
 
     public List<CardButton> Buttons { get; init; } = [];
     public SKImage? Image { get; init; }
+
+    /// <summary>Картинка круглая (аватар), а не скруглённый квадрат (снимок).</summary>
+    public bool RoundImage { get; init; }
     public Action? OnClick { get; init; }
 
     /// <summary>Доля 0..1 для полосы прогресса; null — полосы нет.</summary>
     public float? Progress { get; set; }
 
-    public bool Sticky => Buttons.Count > 0;
+    /// <summary>Карточка с кнопками тоже уходит по времени (сообщение в мессенджере), а не ждёт ответа вечно.</summary>
+    public bool AutoClose { get; init; }
+
+    /// <summary>Подпись длиннее одной строки: карточка выше, текст переносится.</summary>
+    public bool TwoLines => Subtitle.Length > 34 && Progress is null;
+
+    public bool Sticky => Buttons.Count > 0 && !AutoClose;
 
     /// <summary>Нужно ли принимать клики мыши, пока карточка на экране.</summary>
-    public bool Interactive => Sticky || OnClick is not null;
+    public bool Interactive => Buttons.Count > 0 || OnClick is not null;
 
     public long ShownAt { get; set; }
 }

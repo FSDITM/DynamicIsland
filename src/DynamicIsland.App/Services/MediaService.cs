@@ -73,6 +73,11 @@ internal sealed class MediaService : IAsyncDisposable
     private int _artworkVersion;
     private readonly Lock _artworkGate = new();
     private string _artworkKey = "";
+    private bool _artworkOk;
+    private int _artworkAttempts;
+    private string _artworkHash = "";
+    private int _running;
+    private volatile bool _again;
 
     /// <summary>Данные изменились — пора перерисовать кадр.</summary>
     public event Action? Changed;
@@ -228,7 +233,31 @@ internal sealed class MediaService : IAsyncDisposable
     private void OnPlaybackChanged(GlobalSystemMediaTransportControlsSession s, object e) => SelectSession();
     private void OnTimelineChanged(GlobalSystemMediaTransportControlsSession s, object e) => _ = RefreshAsync();
 
+    /// <summary>
+    /// Обновление идёт по одному: события от плеера приходят пачками, и без этого
+    /// более медленный старый ответ мог дописаться поверх нового — отсюда «чужие» обложки.
+    /// </summary>
     private async Task RefreshAsync()
+    {
+        _again = true;
+        if (Interlocked.Exchange(ref _running, 1) == 1) return;
+
+        try
+        {
+            while (_again)
+            {
+                _again = false;
+                await RefreshOnceAsync();
+            }
+        }
+        finally
+        {
+            Volatile.Write(ref _running, 0);
+            if (_again) _ = RefreshAsync();
+        }
+    }
+
+    private async Task RefreshOnceAsync()
     {
         try
         {
@@ -281,15 +310,68 @@ internal sealed class MediaService : IAsyncDisposable
             // Обложка декодируется только когда сменился трек — это самая
             // дорогая операция в сервисе.
             var key = $"{session.SourceAppUserModelId}|{title}|{artist}";
-            if (key != _artworkKey && props?.Thumbnail is { } thumb)
-                SetArtwork(await DecodeThumbnailAsync(thumb), key);
+            if (key != _artworkKey)
+            {
+                _artworkOk = false;
+                _artworkAttempts = 0;
+            }
+
+            if (!_artworkOk && _artworkAttempts < 6)
+                await UpdateArtworkAsync(props, key, trackChanged: key != _artworkKey);
 
             Changed?.Invoke();
         }
         catch (Exception ex) { Log.Write("MediaService.Refresh: " + ex.Message); }
     }
 
-    private static async Task<SKImage?> DecodeThumbnailAsync(IRandomAccessStreamReference reference)
+    /// <summary>
+    /// Обложка приходит позже названия, а иногда ещё и от предыдущего трека:
+    /// Spotify и браузеры обновляют миниатюру с задержкой. Поэтому при смене трека
+    /// пустую или повторившуюся картинку не принимаем сразу, а перечитываем несколько раз.
+    /// </summary>
+    private async Task UpdateArtworkAsync(GlobalSystemMediaTransportControlsSessionMediaProperties? props,
+                                          string key, bool trackChanged)
+    {
+        var attempt = _artworkAttempts++;
+        var (image, hash) = props?.Thumbnail is { } thumb ? await DecodeThumbnailAsync(thumb) : (null, "");
+
+        if (image is null)
+        {
+            // Обложки нет: пока она не появилась, показываем заглушку, а не чужую.
+            if (trackChanged) SetArtwork(null, key);
+            _artworkKey = key;
+            ScheduleArtworkRetry(key, attempt);
+            return;
+        }
+
+        // Та же картинка, что у предыдущего трека, при смене названия: возможно, это ещё старая.
+        // Альбомные треки делят обложку, поэтому после одной проверки принимаем как есть.
+        if (trackChanged && attempt == 0 && hash == _artworkHash && _artworkHash.Length > 0)
+        {
+            image.Dispose();
+            _artworkKey = key;
+            ScheduleArtworkRetry(key, attempt);
+            return;
+        }
+
+        _artworkHash = hash;
+        _artworkOk = true;
+        SetArtwork(image, key);
+    }
+
+    private void ScheduleArtworkRetry(string key, int attempt)
+    {
+        int[] delays = [450, 900, 1800, 3500, 6000, 6000];
+        if (attempt >= delays.Length) return;
+
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(delays[attempt]);
+            if (_artworkKey == key && !_artworkOk) _ = RefreshAsync();
+        });
+    }
+
+    private static async Task<(SKImage? Image, string Hash)> DecodeThumbnailAsync(IRandomAccessStreamReference reference)
     {
         try
         {
@@ -297,13 +379,16 @@ internal sealed class MediaService : IAsyncDisposable
             using var net = stream.AsStreamForRead();
             using var buffer = new MemoryStream();
             await net.CopyToAsync(buffer);
-            buffer.Position = 0;
+            if (buffer.Length < 64) return (null, "");
 
-            using var data = SKData.Create(buffer);
+            var bytes = buffer.ToArray();
+            var hash = Convert.ToHexString(System.Security.Cryptography.SHA1.HashData(bytes));
+
+            using var data = SKData.CreateCopy(bytes);
             using var bitmap = SKBitmap.Decode(data);
-            return bitmap is null ? null : SKImage.FromBitmap(bitmap);
+            return bitmap is null || bitmap.Width < 2 ? (null, "") : (SKImage.FromBitmap(bitmap), hash);
         }
-        catch { return null; }
+        catch { return (null, ""); }
     }
 
     private void SetArtwork(SKImage? image, string key)

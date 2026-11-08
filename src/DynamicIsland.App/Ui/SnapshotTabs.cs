@@ -85,6 +85,41 @@ internal static class SnapshotTabs
         data.SaveTo(stream);
     }
 
+    /// <summary>Длинная строка песни в трёх моментах прокрутки: проверка бегущей строки.</summary>
+    public static void RenderLyrics(string directory)
+    {
+        Directory.CreateDirectory(directory);
+        var settings = new Settings();
+        var media = new MediaSnapshot(true, true, "Весна", "Русский размер", "spotify",
+            TimeSpan.FromSeconds(82), TimeSpan.FromSeconds(268), 0, true);
+        var power = new PowerSnapshot(72, false, true);
+        const string line = "Он постоянно один, когда приходит весна и всё вокруг начинает цвести";
+
+        foreach (var progress in new[] { 0f, 2f, 5f })
+        {
+            foreach (var mode in new[] { IslandMode.Expanded, IslandMode.Rest })
+            {
+                const float scale = 1.5f;
+                var width = (int)(620 * scale);
+                var height = (int)(210 * scale);
+                using var surface = SKSurface.Create(new SKImageInfo(width, height));
+                surface.Canvas.Clear(new SKColor(30, 30, 34));
+                var island = new Island(settings);
+                island.SetMode(mode);
+                for (var i = 0; i < 800; i++) island.Update(1f / 120f);
+
+                using var content = new IslandContent(settings);
+                content.LyricLine = () => (line, progress, 5f);
+                content.Draw(surface.Canvas, island, width, height, scale, media, null, power);
+
+                using var image = surface.Snapshot();
+                using var data = image.Encode(SKEncodedImageFormat.Png, 100);
+                using var file = File.Create(Path.Combine(directory, $"lyric-{mode}-{progress:0.0}.png"));
+                data.SaveTo(file);
+            }
+        }
+    }
+
     /// <summary>Вкладка в режиме эмодзи и со своими цветами.</summary>
     public static void RenderCustom(string path)
     {

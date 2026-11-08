@@ -40,6 +40,46 @@ internal static class FeatureTests
         File.WriteAllBytes(path, enc.ToArray());
     }
 
+    /// <summary>Что видит слушатель уведомлений Windows прямо сейчас.</summary>
+    public static string NotificationProbe()
+    {
+        var sb = new StringBuilder();
+        try
+        {
+            var listener = Windows.UI.Notifications.Management.UserNotificationListener.Current;
+            var access = listener.RequestAccessAsync().AsTask().GetAwaiter().GetResult();
+            sb.AppendLine("доступ: " + access);
+            if (access == Windows.UI.Notifications.Management.UserNotificationListenerAccessStatus.Allowed)
+            {
+                var list = listener.GetNotificationsAsync(Windows.UI.Notifications.NotificationKinds.Toast).AsTask().GetAwaiter().GetResult();
+                sb.AppendLine("уведомлений: " + list.Count);
+                foreach (var n in list)
+                {
+                    var d = NotificationService.Describe(n);
+                    var xml = ToastPayload.Read(n.Id);
+                    using var avatar = xml is null ? null : ToastPayload.Avatar(xml);
+                    sb.AppendLine($"  [{n.AppInfo?.DisplayInfo?.DisplayName}] id={n.Id} payload={xml is not null} avatar={avatar is not null}");
+                }
+            }
+        }
+        catch (Exception ex) { sb.AppendLine("ИСКЛЮЧЕНИЕ: " + ex); }
+        return sb.ToString();
+    }
+
+    /// <summary>Достаёт кадр из середины видео в PNG: так проверяется, что запись не чёрная.</summary>
+    public static void VideoFrame(string video, string png)
+    {
+        var file = Windows.Storage.StorageFile.GetFileFromPathAsync(video).AsTask().GetAwaiter().GetResult();
+        var clip = Windows.Media.Editing.MediaClip.CreateFromFileAsync(file).AsTask().GetAwaiter().GetResult();
+        var comp = new Windows.Media.Editing.MediaComposition();
+        comp.Clips.Add(clip);
+        using var stream = comp.GetThumbnailAsync(TimeSpan.FromSeconds(Math.Max(0.5, clip.OriginalDuration.TotalSeconds / 2)),
+            0, 0, Windows.Media.Editing.VideoFramePrecision.NearestFrame).AsTask().GetAwaiter().GetResult();
+        using var net = stream.AsStreamForRead();
+        using var outFile = File.Create(png);
+        net.CopyTo(outFile);
+    }
+
     public static int Run(string reportPath)
     {
         CultureInfo.CurrentCulture = new CultureInfo("ru-RU");
@@ -175,6 +215,51 @@ internal static class FeatureTests
                 Check("GIF несколько кадров", frames >= 10, true);
                 File.Delete(saved);
             }
+        }
+
+        // Ответ в Telegram: разбор уведомления и сверка заголовка окна
+        {
+            const string user = "<toast launch=\"action=open&amp;pid=1&amp;session=5&amp;peer=7435418086&amp;topic=1&amp;monoforumpeer=0&amp;msg=375245\"></toast>";
+            var t = TelegramReply.Parse(user, "Анна");
+            Check("Telegram: личный чат", t?.DeepLink, "tg://openmessage?user_id=7435418086&message_id=375245");
+
+            var group = $"<toast launch=\"action=open&amp;pid=1&amp;session=5&amp;peer={(1L << 48) + 777}&amp;topic=1&amp;monoforumpeer=0&amp;msg=9\"></toast>";
+            var g = TelegramReply.Parse(group, "Рабочий чат → Анна");
+            Check("Telegram: группа", g?.DeepLink, "tg://openmessage?chat_id=777&message_id=9");
+            Check("Telegram: название группы без отправителя", g?.ChatTitle, "Рабочий чат");
+
+            var channel = $"<toast launch=\"action=open&amp;pid=1&amp;session=5&amp;peer={(2L << 48) + 5}&amp;topic=1&amp;monoforumpeer=0&amp;msg=9\"></toast>";
+            Check("Telegram: канал", TelegramReply.Parse(channel, "Канал")?.DeepLink, "tg://openmessage?channel_id=5&message_id=9");
+            Check("Telegram: без сообщения", TelegramReply.Parse("<toast launch=\"action=open&amp;peer=1\"></toast>", "x"), null);
+
+            Check("шапка: чат найден среди прочего текста", TelegramReply.ChatNameMatches("Анна\nбыла недавно\n", "Анна"), true);
+            Check("шапка: чужой чат", TelegramReply.ChatNameMatches("Борис\nв сети", "Анна"), false);
+            Check("шапка: стилизованное имя", TelegramReply.ChatNameMatches("OWNER | Rich Club\nбыл(а) недавно", "OWNER | \U0001D411\U0001D422\U0001D41C\U0001D421 \U0001D402\U0001D425\U0001D42E\U0001D41B"), true);
+            Check("шапка: ошибка распознавания в одной букве", TelegramReply.ChatNameMatches("Рабочий чат", "Рабочий чaт"), true);
+            Check("шапка: слишком короткое имя", TelegramReply.ChatNameMatches("Анна", "Я"), false);
+            Check("шапка: пустое имя", TelegramReply.ChatNameMatches("Анна", ""), false);
+        }
+
+        // Баннеры Windows: спрятать и вернуть на выдуманном приложении
+        {
+            const string fake = "DynamicIslandTestApp.Fake";
+            var path = @"Software\Microsoft\Windows\CurrentVersion\Notifications\Settings\" + fake;
+            using (var k = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(path)) k.SetValue("ShowBanner", 1, Microsoft.Win32.RegistryValueKind.DWord);
+
+            var cfg = new Configuration.Settings { IslandOnlyNotifications = true, IslandOnlyApps = ["DynamicIslandTestApp"] };
+            NotificationSetup.Apply(cfg);
+            using (var k = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(path))
+            {
+                Check("баннер спрятан", k?.GetValue("ShowBanner"), 0);
+                Check("уведомления включены", k?.GetValue("Enabled"), 1);
+            }
+            Check("прежнее значение запомнено", cfg.BannerBackup.GetValueOrDefault(fake, -9), 1);
+
+            NotificationSetup.RestoreAll(cfg);
+            using (var k = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(path))
+                Check("баннер возвращён", k?.GetValue("ShowBanner"), 1);
+            Check("запись о резервной копии убрана", cfg.BannerBackup.Count, 0);
+            Microsoft.Win32.Registry.CurrentUser.DeleteSubKeyTree(path, throwOnMissingSubKey: false);
         }
 
         // Тема Windows: туда и обратно

@@ -62,7 +62,7 @@
             <Setter Property="Foreground" Value="{StaticResource FgMuted}"/>
             <Setter Property="FontSize" Value="12"/>
             <Setter Property="FontWeight" Value="SemiBold"/>
-            <Setter Property="Margin" Value="14,0,0,7"/>
+            <Setter Property="Margin" Value="2,0,0,8"/>
         </Style>
 
         <!--
@@ -416,6 +416,25 @@
                     </StackPanel>
                 </StackPanel>
 
+                <!-- Поиск: ищет по названиям и подсказкам во всех разделах сразу. -->
+                <Border DockPanel.Dock="Top" Margin="14,0,14,12" Background="#FF181614" CornerRadius="4"
+                        Height="36">
+                    <Grid>
+                        <TextBlock Text="&#xE721;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="13"
+                                   Foreground="{StaticResource FgMuted}" HorizontalAlignment="Left" Margin="11,0,0,0"/>
+                        <TextBlock x:Name="SearchHint" Text="Поиск настроек" Foreground="{StaticResource FgMuted}"
+                                   FontSize="13" Margin="34,0,30,0" IsHitTestVisible="False"
+                                   TextTrimming="CharacterEllipsis"/>
+                        <TextBox x:Name="SearchBox" Background="Transparent" Padding="0" FontSize="13"
+                                 Margin="34,0,30,0" TextChanged="OnSearchChanged" GotKeyboardFocus="OnSearchFocus" PreviewKeyDown="OnSearchKeyDown"
+                                 VerticalAlignment="Center"/>
+                        <TextBlock x:Name="SearchClear" Text="&#xE711;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets"
+                                   FontSize="11" Foreground="{StaticResource FgMuted}" HorizontalAlignment="Right"
+                                   Margin="0,0,11,0" Cursor="Hand" Visibility="Collapsed"
+                                   MouseLeftButtonDown="OnSearchClear"/>
+                    </Grid>
+                </Border>
+
                 <StackPanel DockPanel.Dock="Bottom" Margin="16,0,16,16">
                     <Button Content="Файл настроек" Style="{StaticResource Action}" Margin="0,0,0,8"
                             Click="OnOpenFile" HorizontalContentAlignment="Center"/>
@@ -428,7 +447,7 @@
         </Border>
 
         <!-- ================= Содержимое ================= -->
-        <ScrollViewer x:Name="ContentScroll" Grid.Column="1" VerticalScrollBarVisibility="Auto" Padding="0"
+        <ScrollViewer x:Name="ContentScroll" Grid.Column="1" VerticalScrollBarVisibility="Visible" Padding="0"
                       HorizontalScrollBarVisibility="Disabled">
             <StackPanel x:Name="ContentHost" Margin="32,26,26,32"/>
         </ScrollViewer>

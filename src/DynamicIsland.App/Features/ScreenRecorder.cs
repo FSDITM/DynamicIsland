@@ -138,8 +138,12 @@ internal sealed class ScreenRecorder
 
                 using var frame = Frame(x, y, width, height);
                 var data = frame.LockBits(new Rectangle(0, 0, width, height), ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
-                var bytes = new byte[Math.Abs(data.Stride) * height];
-                Marshal.Copy(data.Scan0, bytes, 0, bytes.Length);
+                // Несжатый RGB в Media Foundation идёт снизу вверх, а кадр GDI — сверху вниз:
+                // без переворота строк видео получалось вверх ногами.
+                var stride = data.Stride;
+                var bytes = new byte[stride * height];
+                for (var row = 0; row < height; row++)
+                    Marshal.Copy(data.Scan0 + row * stride, bytes, (height - 1 - row) * stride, stride);
                 frame.UnlockBits(data);
 
                 var sample = MediaStreamSample.CreateFromBuffer(bytes.AsBuffer(), clock.Elapsed);

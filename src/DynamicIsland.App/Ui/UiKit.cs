@@ -167,22 +167,97 @@ internal sealed class UiKit : IDisposable
         Hits.Add(_canvas.TotalMatrix.MapRect(local), left, right, press);
     }
 
+    // ---------- Текст с запасными шрифтами ----------
+    //
+    // У Rubik нет эмодзи, стилизованных букв и многих символов из имён в мессенджерах:
+    // без запасных шрифтов вместо них рисовались пустые квадраты. Каждый символ, которого нет
+    // в основном шрифте, ищется у системы, а соседние символы одного шрифта рисуются одним куском.
+
+    private readonly Dictionary<int, SKTypeface?> _fallbacks = [];
+    private readonly Dictionary<SKTypeface, SKFont> _fallbackFonts = [];
+
+    private SKTypeface? FallbackFor(int codepoint)
+    {
+        if (_fallbacks.TryGetValue(codepoint, out var cached)) return cached;
+        SKTypeface? face = null;
+        try { face = SKFontManager.Default.MatchCharacter(codepoint); }
+        catch { /* нет подходящего шрифта */ }
+        if (_fallbacks.Count > 2000) _fallbacks.Clear();
+        _fallbacks[codepoint] = face;
+        return face;
+    }
+
+    private SKFont FontFor(SKTypeface face, SKFont primary, float size)
+    {
+        if (ReferenceEquals(face, primary.Typeface)) return primary;
+        if (!_fallbackFonts.TryGetValue(face, out var font))
+        {
+            font = new SKFont(face, size) { Subpixel = true };
+            _fallbackFonts[face] = font;
+        }
+        font.Size = size;
+        return font;
+    }
+
+    /// <summary>Строка, разбитая на куски по шрифтам. Невидимые управляющие символы отбрасываются.</summary>
+    private List<(string Text, SKFont Font)> Runs(string text, SKFont primary, float size)
+    {
+        var runs = new List<(string, SKFont)>();
+        var current = new System.Text.StringBuilder();
+        SKFont? currentFont = null;
+
+        foreach (var rune in text.EnumerateRunes())
+        {
+            var cat = System.Text.Rune.GetUnicodeCategory(rune);
+            if (cat is System.Globalization.UnicodeCategory.Format or System.Globalization.UnicodeCategory.Control &&
+                rune.Value != '\t') continue;
+
+            var face = primary.Typeface;
+            if (face is null || !face.ContainsGlyph(rune.Value))
+                face = (rune.Value > 32 ? FallbackFor(rune.Value) : null) ?? primary.Typeface;
+
+            var font = face is null ? primary : FontFor(face, primary, size);
+            if (currentFont is not null && !ReferenceEquals(font, currentFont))
+            {
+                runs.Add((current.ToString(), currentFont));
+                current.Clear();
+            }
+            currentFont = font;
+            current.Append(rune.ToString());
+        }
+
+        if (currentFont is not null && current.Length > 0) runs.Add((current.ToString(), currentFont));
+        return runs;
+    }
+
     public float Measure(string text, float size, bool bold = false)
     {
+        if (string.IsNullOrEmpty(text)) return 0;
         var font = bold ? _bold : _regular;
         font.Size = size;
-        return font.MeasureText(text);
+        float total = 0;
+        foreach (var (chunk, f) in Runs(text, font, size)) total += f.MeasureText(chunk);
+        return total;
     }
 
     public string Fit(string text, float size, float maxWidth, bool bold = false)
     {
         if (string.IsNullOrEmpty(text)) return "";
-        var font = bold ? _bold : _regular;
-        font.Size = size;
-        if (font.MeasureText(text) <= maxWidth) return text;
+        if (Measure(text, size, bold) <= maxWidth) return text;
 
-        var count = (int)font.BreakText(text, Math.Max(0, maxWidth - font.MeasureText("…")));
-        return count <= 0 ? "…" : string.Concat(text.AsSpan(0, count).TrimEnd(), "…");
+        var limit = Math.Max(0, maxWidth - Measure("…", size, bold));
+        var sb = new System.Text.StringBuilder();
+        foreach (var rune in text.EnumerateRunes())
+        {
+            sb.Append(rune.ToString());
+            if (Measure(sb.ToString(), size, bold) > limit)
+            {
+                sb.Length -= rune.Utf16SequenceLength;
+                break;
+            }
+        }
+        var cut = sb.ToString().TrimEnd();
+        return cut.Length == 0 ? "…" : cut + "…";
     }
 
     public void Text(string text, float x, float baseline, float size, SKColor color,
@@ -192,12 +267,32 @@ internal sealed class UiKit : IDisposable
         var font = bold ? _bold : _regular;
         font.Size = size;
         _text.Color = WithA(color);
-        _canvas.DrawText(text, x, baseline, align, font, _text);
+
+        var runs = Runs(text, font, size);
+        if (runs.Count == 1)
+        {
+            _canvas.DrawText(runs[0].Text, x, baseline, align, runs[0].Font, _text);
+            return;
+        }
+
+        var width = 0f;
+        foreach (var (chunk, f) in runs) width += f.MeasureText(chunk);
+        var pen = align switch
+        {
+            SKTextAlign.Center => x - width / 2f,
+            SKTextAlign.Right => x - width,
+            _ => x,
+        };
+        foreach (var (chunk, f) in runs)
+        {
+            _canvas.DrawText(chunk, pen, baseline, SKTextAlign.Left, f, _text);
+            pen += f.MeasureText(chunk);
+        }
     }
 
     /// <summary>Несколько строк с переносом по словам. Возвращает занятую высоту.</summary>
     public float Paragraph(string text, float x, float top, float width, float size, SKColor color,
-                           float lineHeight, int maxLines = 99)
+                           float lineHeight, int maxLines = 99, bool ellipsis = false)
     {
         if (string.IsNullOrEmpty(text)) return 0;
         var font = _regular;
@@ -212,8 +307,14 @@ internal sealed class UiKit : IDisposable
             foreach (var w in words)
             {
                 var test = line.Length == 0 ? w : line + " " + w;
-                if (font.MeasureText(test) > width && line.Length > 0)
+                if (Measure(test, size) > width && line.Length > 0)
                 {
+                    // Последняя разрешённая строка: остаток не помещается — обрезаем многоточием.
+                    if (ellipsis && lines + 1 >= maxLines)
+                    {
+                        Text(Fit(line + " " + w + " " + string.Join(' ', words.SkipWhile(x2 => x2 != w).Skip(1)), size, width), x, y, size, color);
+                        return y + lineHeight - top;
+                    }
                     Text(line, x, y, size, color);
                     y += lineHeight;
                     if (++lines >= maxLines) return y - top;
@@ -364,6 +465,7 @@ internal sealed class UiKit : IDisposable
         _bold.Dispose();
         _icons.Dispose();
         _emoji?.Dispose();
+        foreach (var f in _fallbackFonts.Values) f.Dispose();
     }
 }
 

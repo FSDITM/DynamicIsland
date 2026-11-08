@@ -338,6 +338,38 @@ internal sealed class Settings : INotifyPropertyChanged
     /// <summary>Микрофон, который островок включает и выключает. Пусто — выбранный в Windows.</summary>
     public string MicDevice { get => _micDevice; set => Set(ref _micDevice, value ?? ""); }
 
+    // ---------- Уведомления ----------
+
+    private bool _showNotifications = true;
+    private string[] _notificationBlocklist = [];
+
+    /// <summary>Показывать уведомления Windows карточкой на островке.</summary>
+    public bool ShowNotifications { get => _showNotifications; set => Set(ref _showNotifications, value); }
+
+    /// <summary>Приложения, чьи уведомления не показывать (часть названия).</summary>
+    public string[] NotificationBlocklist { get => _notificationBlocklist; set => Set(ref _notificationBlocklist, value ?? []); }
+
+    // ---------- Баннеры Windows ----------
+
+    private bool _islandOnlyNotifications = true;
+    private string[] _islandOnlyApps = ["Telegram", "Discord", "WhatsApp", "Viber", "Signal"];
+
+    /// <summary>Убирать системные баннеры у перечисленных приложений: сообщения видны только на острове.</summary>
+    public bool IslandOnlyNotifications { get => _islandOnlyNotifications; set => Set(ref _islandOnlyNotifications, value); }
+
+    /// <summary>Части названий приложений (по идентификатору в Windows), которых это касается.</summary>
+    public string[] IslandOnlyApps { get => _islandOnlyApps; set => Set(ref _islandOnlyApps, value ?? []); }
+
+    /// <summary>Прежнее значение «показывать баннер» для каждого приложения: -1 — значения не было.</summary>
+    public Dictionary<string, int> BannerBackup { get; set; } = [];
+
+        // ---------- Telegram ----------
+
+    private bool _telegramReply;
+
+    /// <summary>Кнопка «Ответить» на карточках Telegram. Выключена: Telegram Desktop не даёт открыть чат по номеру, надёжного способа пока нет.</summary>
+    public bool TelegramReply { get => _telegramReply; set => Set(ref _telegramReply, value); }
+
     // ---------- 2.0: командная строка ----------
 
     private string _searchUrl = "https://yandex.ru/search/?text={0}";

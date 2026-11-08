@@ -55,15 +55,39 @@ internal static class OcrService
         return Join(chosen);
     }
 
+    /// <summary>
+    /// Насколько строка похожа на настоящий текст: доля символов в «чистых» словах.
+    /// Чистое слово — одной письменности, без цифр посреди букв и без знаков внутри.
+    /// Английский движок на русском слове выдаёт кашу вроде «IIPL.4BeT», и такая каша
+    /// проваливается по этому правилу, даже если буквы в ней латинские.
+    /// </summary>
     private static double Score(string text, bool cyrillicEngine)
     {
-        if (text.Length == 0) return 0;
-        var native = text.Count(c => cyrillicEngine
-            ? c is >= 'а' and <= 'я' or >= 'А' and <= 'Я' or 'ё' or 'Ё' or >= '0' and <= '9'
-            : c is >= 'a' and <= 'z' or >= 'A' and <= 'Z' or >= '0' and <= '9');
-        var letters = text.Count(char.IsLetterOrDigit);
-        if (letters == 0) return 0;
-        return (double)native / letters * Math.Log(letters + 2);
+        var total = 0;
+        var clean = 0;
+        foreach (var raw in text.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var word = raw.Trim('.', ',', ';', ':', '!', '?', '«', '»', '(', ')', '"', '\'', '—', '-', '–');
+            if (word.Length == 0) continue;
+            total += word.Length;
+
+            var cyr = word.Count(c => c is >= 'а' and <= 'я' or >= 'А' and <= 'Я' or 'ё' or 'Ё');
+            var lat = word.Count(c => c is >= 'a' and <= 'z' or >= 'A' and <= 'Z');
+            var digits = word.Count(char.IsDigit);
+            var other = word.Length - cyr - lat - digits;
+
+            var ok = other == 0 && !(cyr > 0 && lat > 0) && !(digits > 0 && cyr + lat > 0);
+            if (ok) clean += word.Length;
+        }
+
+        if (total == 0) return 0;
+        var score = (double)clean / total;
+
+        // При равенстве читаем тем движком, чей алфавит встречается в строке чаще.
+        var nativeShare = text.Count(c => cyrillicEngine
+            ? c is >= 'а' and <= 'я' or >= 'А' and <= 'Я' or 'ё' or 'Ё'
+            : c is >= 'a' and <= 'z' or >= 'A' and <= 'Z') / (double)Math.Max(1, text.Length);
+        return score + nativeShare * 0.05;
     }
 
     private static string Join(List<Line> lines) =>

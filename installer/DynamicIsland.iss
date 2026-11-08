@@ -105,6 +105,8 @@ Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchApp}"; Flags: nowait postin
 [UninstallRun]
 ; Работающий островок держит свои файлы — закрываем перед удалением.
 Filename: "{sys}\taskkill.exe"; Parameters: "/F /IM {#AppExe}"; Flags: runhidden; RunOnceId: "StopIsland"
+; Вернуть системные баннеры уведомлений, которые остров прятал.
+Filename: "{app}\{#AppExe}"; Parameters: "--restore-notifications"; Flags: runhidden; RunOnceId: "RestoreBanners"
 
 [Code]
 // Перед установкой поверх старой версии приложение надо остановить, иначе

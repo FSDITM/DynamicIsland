@@ -53,13 +53,14 @@ public partial class SettingsWindow : Window
             ("Расположение", "На каком экране и в каком месте он живёт.", BuildPlacement),
             ("Содержимое", "Что показывать и какой клавишей вызывать.", BuildContent),
             ("Панель и события", "Вкладки, события в пилюле, звук и тема.", BuildFeatures),
+            ("Уведомления", "Сообщения из Telegram и других приложений прямо на острове.", BuildNotifications),
             ("Снимки и запись", "Куда сохранять и как снимать экран.", BuildCapture),
             ("Погода", "Город, значки и предупреждения.", BuildWeatherSection),
             ("Горячие клавиши", "Глобальные сочетания, работают в любом приложении.", BuildHotkeys),
             ("О программе", "Откуда взялся этот островок.", BuildAbout),
         ];
 
-        string[] glyphs = ["\uE790", "\uE713", "\uE707", "\uE8A5", "\uE8A9", "\uE722", "\uE753", "\uE765", "\uE946"];
+        string[] glyphs = ["\uE790", "\uE713", "\uE707", "\uE8A5", "\uE8A9", "", "\uE722", "\uE753", "\uE765", "\uE946"];
         for (var i = 0; i < _sections.Count; i++)
             Nav.Items.Add(new NavEntry(_sections[i].Title, glyphs[Math.Min(i, glyphs.Length - 1)]));
 
@@ -137,6 +138,18 @@ public partial class SettingsWindow : Window
     {
         if (Nav.SelectedIndex < 0) return;
 
+        // Выбрал раздел в меню — поиск закончен.
+        if (SearchBox.Text.Length > 0)
+        {
+            _searchSuppress = true;
+            SearchBox.Text = "";
+            _searchSuppress = false;
+            DropSearchCache();
+            SearchHint.Visibility = Visibility.Visible;
+            SearchClear.Visibility = Visibility.Collapsed;
+        }
+        _lastSection = Nav.SelectedIndex;
+
         _refreshers.Clear();
         ContentHost.Children.Clear();
 
@@ -145,6 +158,205 @@ public partial class SettingsWindow : Window
         ContentHost.Children.Add(new TextBlock { Text = subtitle, Style = (Style)FindResource("Subtitle") });
 
         build(ContentHost);
+    }
+
+    // ==================== Поиск ====================
+
+    /// <summary>Слова, по которым находится раздел, даже если их нет в названиях строк.</summary>
+    private static readonly Dictionary<string, string> Keywords = new()
+    {
+        ["Вид"] = "цвет фон размер ширина высота скругление тень прозрачность акцент эквалайзер иконки эмодзи тема color",
+        ["Поведение"] = "раскрытие задержка анимация полноэкранный сворачивать браузер скорость",
+        ["Расположение"] = "монитор экран позиция положение место",
+        ["Содержимое"] = "часы дата батарея шрифт автозапуск автозагрузка метрики font",
+        ["Панель и события"] = "вкладки буфер обмена микрофон камера caps lock vpn steam загрузки раскладка тема масштаб",
+        ["Уведомления"] = "telegram телеграм discord whatsapp viber signal мессенджер баннер сообщения",
+        ["Снимки и запись"] = "скриншот видео gif mp4 папка запись screenshot",
+        ["Погода"] = "город температура дождь снег фаренгейт weather",
+        ["Горячие клавиши"] = "hotkey сочетания комбинации клавиши ctrl alt",
+        ["О программе"] = "версия лицензия автор",
+    };
+
+    private bool _searchSuppress;
+    private int _lastSection;
+
+    private void OnSearchClear(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        SearchBox.Clear();
+        SearchBox.Focus();
+    }
+
+    private void OnSearchKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key == System.Windows.Input.Key.Escape && SearchBox.Text.Length > 0)
+        {
+            SearchBox.Clear();
+            e.Handled = true;
+        }
+    }
+
+    protected override void OnPreviewKeyDown(System.Windows.Input.KeyEventArgs e)
+    {
+        base.OnPreviewKeyDown(e);
+        if (e.Key == System.Windows.Input.Key.F &&
+            (System.Windows.Input.Keyboard.Modifiers & System.Windows.Input.ModifierKeys.Control) != 0)
+        {
+            SearchBox.Focus();
+            SearchBox.SelectAll();
+            e.Handled = true;
+        }
+    }
+
+    private void OnSearchChanged(object sender, TextChangedEventArgs e)
+    {
+        var query = SearchBox.Text.Trim();
+        SearchHint.Visibility = SearchBox.Text.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
+        SearchClear.Visibility = SearchBox.Text.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
+        if (_searchSuppress) return;
+
+        if (query.Length == 0)
+        {
+            DropSearchCache();
+            // Вернуться в раздел, где был. Если выбор тот же, событие не придёт — строим вручную.
+            if (Nav.SelectedIndex == _lastSection) OnSectionChanged(this, null!);
+            else Nav.SelectedIndex = _lastSection;
+            return;
+        }
+
+        RunSearch(query);
+    }
+
+    private List<(int Section, int Group, string? Caption, Grid Row)>? _searchCache;
+    private List<Action>? _searchRefreshers;
+    private readonly List<StackPanel> _shownCards = [];
+
+    private void DropSearchCache()
+    {
+        _searchCache = null;
+        _searchRefreshers = null;
+        _shownCards.Clear();
+    }
+
+    /// <summary>Собирает все разделы во временные панели и забирает из них строки с живыми контролами.</summary>
+    private void BuildSearchCache()
+    {
+        // Обновлялки открытого раздела не трогаем: кэш можно строить заранее, пока ещё виден раздел.
+        var saved = _refreshers.ToList();
+        _refreshers.Clear();
+        var cache = new List<(int, int, string?, Grid)>();
+        for (var s = 0; s < _sections.Count; s++)
+        {
+            var temp = new StackPanel();
+            try { _sections[s].Build(temp); }
+            catch (Exception ex) { Log.Write("Поиск: раздел не собрался: " + ex.Message); continue; }
+
+            string? caption = null;
+            var group = 0;
+            foreach (var child in temp.Children.Cast<UIElement>().ToList())
+            {
+                if (child is TextBlock { Style: var st } tb && ReferenceEquals(st, FindResource("GroupCaption")))
+                {
+                    caption = tb.Text;
+                }
+                else if (child is Border { Child: StackPanel inner })
+                {
+                    foreach (var row in inner.Children.OfType<Grid>().ToList())
+                    {
+                        inner.Children.Remove(row);
+                        cache.Add((s, group, caption, row));
+                    }
+                    group++;
+                    caption = null;
+                }
+            }
+        }
+
+        _searchCache = cache;
+        _searchRefreshers = [.. _refreshers];
+        _refreshers.Clear();
+        _refreshers.AddRange(saved);
+    }
+
+    /// <summary>Пока человек тянется к клавиатуре, кэш поиска уже готовится — первая буква не подвисает.</summary>
+    private void OnSearchFocus(object sender, System.Windows.Input.KeyboardFocusChangedEventArgs e)
+    {
+        if (_searchCache is not null) return;
+        Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.ApplicationIdle, () =>
+        {
+            if (_searchCache is null && SearchBox.Text.Length == 0) BuildSearchCache();
+        });
+    }
+
+    /// <summary>Показывает подходящие строки из кэша; сами контролы остаются живыми.</summary>
+    private void RunSearch(string query)
+    {
+        _searchSuppress = true;
+        Nav.SelectedIndex = -1;
+        _searchSuppress = false;
+
+        // Разделы собираются один раз за поиск: сборка всех десяти занимала ~350 мс на каждую букву.
+        if (_searchCache is null) BuildSearchCache();
+        _refreshers.Clear();
+        _refreshers.AddRange(_searchRefreshers!);
+
+        // Строки живут в карточках выдачи; перед новой выдачей их надо оторвать от старых.
+        foreach (var shown in _shownCards) shown.Children.Clear();
+        _shownCards.Clear();
+        ContentHost.Children.Clear();
+
+        var title = new TextBlock { Text = "Поиск", Style = (Style)FindResource("Title") };
+        var subtitle = new TextBlock { Style = (Style)FindResource("Subtitle") };
+        ContentHost.Children.Add(title);
+        ContentHost.Children.Add(subtitle);
+
+        var total = 0;
+        for (var s = 0; s < _sections.Count; s++)
+        {
+            // Запрос совпал с названием или ключевым словом раздела — показываем раздел целиком.
+            var sectionHit = _sections[s].Title.Contains(query, StringComparison.CurrentCultureIgnoreCase) ||
+                             (Keywords.TryGetValue(_sections[s].Title, out var kw) &&
+                              kw.Contains(query, StringComparison.CurrentCultureIgnoreCase));
+
+            var groups = _searchCache!.Where(x => x.Section == s)
+                .GroupBy(x => x.Group)
+                .Select(g => (Caption: g.First().Caption, Rows: g
+                    .Where(x => sectionHit || (x.Row.Tag as string ?? "").Contains(query, StringComparison.CurrentCultureIgnoreCase))
+                    .Select(x => x.Row).ToList()))
+                .Where(g => g.Rows.Count > 0)
+                .ToList();
+            if (groups.Count == 0) continue;
+
+            var index = s;
+            var link = new TextBlock
+            {
+                Text = _sections[s].Title + "  ›",
+                Foreground = (Brush)FindResource("Fg"),
+                FontSize = 15,
+                FontWeight = FontWeights.SemiBold,
+                Cursor = System.Windows.Input.Cursors.Hand,
+                Margin = new Thickness(0, 4, 0, 10),
+                ToolTip = "Открыть раздел",
+            };
+            link.MouseLeftButtonDown += (_, _) => Nav.SelectedIndex = index;
+            ContentHost.Children.Add(link);
+
+            foreach (var (cap, rows) in groups)
+            {
+                var card = Card(ContentHost, cap);
+                _shownCards.Add(card);
+                foreach (var row in rows)
+                {
+                    if (card.Children.Count > 0) card.Children.Add(Separator());
+                    card.Children.Add(row);
+                    total++;
+                }
+            }
+        }
+
+        subtitle.Text = total == 0
+            ? $"По запросу «{query}» ничего не нашлось. Попробуйте другое слово."
+            : $"Найдено: {total}. Нажмите на название раздела, чтобы открыть его целиком.";
+        ContentScroll.ScrollToTop();
     }
 
     // ==================== Разделы ====================
@@ -237,8 +449,8 @@ public partial class SettingsWindow : Window
         ToggleRow(shape, "Акцент из обложки", () => _settings.AccentFromArt, v => _settings.AccentFromArt = v,
             "Цвет интерфейса берётся с обложки играющего трека. Выключите, чтобы всегда брался ваш цвет ниже.");
         ColorRow(shape, "Цвет интерфейса", () => _settings.AccentColor, v => _settings.AccentColor = v);
-        ColorRow(shape, "Цвет эквалайзера", () => _settings.EqualizerColor, v => _settings.EqualizerColor = v);
-        ColorRow(shape, "Цвет значков", () => _settings.IconColor, v => _settings.IconColor = v);
+        ColorRow(shape, "Цвет эквалайзера", () => _settings.EqualizerColor, v => _settings.EqualizerColor = v, allowAuto: true);
+        ColorRow(shape, "Цвет значков", () => _settings.IconColor, v => _settings.IconColor = v, allowAuto: true);
 
         var tabs = Card(host, "Вкладки");
         ChoiceRow(tabs, "Чем подписаны", ["Значки", "Эмодзи"],
@@ -324,7 +536,7 @@ public partial class SettingsWindow : Window
 
         var font = Card(host, "Шрифт");
         TextRow(font, "Семейство", () => _settings.FontFamily, v => _settings.FontFamily = v,
-            "Пусто — вшитый Rubik. Можно указать свой, например SF Pro, если он установлен в системе.");
+            "Можно указать свой, например SF Pro, если он установлен в системе.", "Rubik (вшитый)");
 
         var system = Card(host, "Система");
         HotkeyRow(system);
@@ -386,13 +598,37 @@ public partial class SettingsWindow : Window
             "Адрес с {0} вместо запроса. Например https://www.google.com/search?q={0}");
     }
 
+    private void BuildNotifications(Panel host)
+    {
+        var general = Card(host, "Уведомления Windows");
+        ToggleRow(general, "Показывать на острове", () => _settings.ShowNotifications, v => _settings.ShowNotifications = v,
+            "Читаются уведомления из центра уведомлений. Если пусто, разрешите доступ: Параметры → Конфиденциальность → Уведомления.");
+        TextRow(general, "Не показывать от приложений", () => string.Join(", ", _settings.NotificationBlocklist),
+            v => _settings.NotificationBlocklist = v.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
+            "Части названий через запятую.", "Например: Steam, Realtek");
+
+        var only = Card(host, "Только на острове");
+        ToggleRow(only, "Убрать системные баннеры мессенджеров", () => _settings.IslandOnlyNotifications,
+            v => _settings.IslandOnlyNotifications = v,
+            "Сообщения не дублируются в углу экрана. Они по-прежнему приходят в центр уведомлений, оттуда их читает остров. При выходе из острова баннеры возвращаются.");
+        TextRow(only, "Для каких приложений", () => string.Join(", ", _settings.IslandOnlyApps),
+            v => _settings.IslandOnlyApps = Features.NotificationSetup.ParseList(v),
+            "Для них же остров включает уведомления Windows.", "Через запятую");
+
+        var tg = Card(host, "Telegram");
+        InfoRow(tg, "Как работает",
+            "Ничего настраивать и входить не нужно: остров читает обычные уведомления Windows и показывает их с аватаром.");
+        InfoRow(tg, "Когда нет карточки",
+            "Telegram не присылает уведомление, пока его окно активно, и при включённом режиме «Не беспокоить».");
+    }
+
     private void BuildCapture(Panel host)
     {
         var folders = Card(host, "Куда сохранять");
         TextRow(folders, "Папка снимков", () => _settings.ScreenshotFolder, v => _settings.ScreenshotFolder = v,
-            "Пусто — «Изображения\\DynamicIsland».");
+            "Куда падают снимки экрана.", "Изображения\\DynamicIsland", folder: true);
         TextRow(folders, "Папка записей", () => _settings.RecordFolder, v => _settings.RecordFolder = v,
-            "Пусто — «Видео\\DynamicIsland».");
+            "Куда падают записи экрана.", "Видео\\DynamicIsland", folder: true);
 
         var record = Card(host, "Запись экрана");
         ChoiceRow(record, "Кадров в секунду", ["30", "60"],
@@ -412,7 +648,7 @@ public partial class SettingsWindow : Window
     {
         var card = Card(host, "Город");
         TextRow(card, "Название города", () => _settings.WeatherCity, v => _settings.WeatherCity = v,
-            "Город ищется по названию, по сети он не угадывается. Можно и из командной строки: «город Казань».");
+            "Город ищется по названию, по сети он не угадывается. Можно и из командной строки: «город Казань».", "Например, Казань");
         InfoRow(card, "Найдено", _settings.WeatherCityResolved.Length > 0 ? _settings.WeatherCityResolved : "—");
 
         var show = Card(host, "Как показывать");
@@ -438,33 +674,90 @@ public partial class SettingsWindow : Window
         HotkeyField(card, "Запись экрана", () => _settings.HotkeyRecord, v => _settings.HotkeyRecord = v);
         HotkeyField(card, "Вставить без форматирования", () => _settings.HotkeyPastePlain, v => _settings.HotkeyPastePlain = v);
 
-        var hint = Card(host, null);
-        InfoRow(hint, "Подсказка", "Пишите сочетание так: Ctrl+Alt+A. Пустое поле выключает клавишу.");
+        host.Children.Add(new TextBlock
+        {
+            Text = "Нажмите на поле и сами нажмите нужные клавиши. Backspace выключает сочетание, Esc отменяет.",
+            Style = (Style)FindResource("RowHint"),
+            Margin = new Thickness(2, 0, 0, 0),
+        });
+    }
+
+    /// <summary>Имя клавиши в том виде, который понимает Hotkey.TryParse; null — клавиша не годится.</summary>
+    private static string? KeyName(System.Windows.Input.Key key)
+    {
+        var vk = System.Windows.Input.KeyInterop.VirtualKeyFromKey(key);
+        if (vk is >= 0x30 and <= 0x39 or >= 0x41 and <= 0x5A) return ((char)vk).ToString();
+        if (vk is >= 0x70 and <= 0x87) return "F" + (vk - 0x70 + 1);
+        return vk switch
+        {
+            0x20 => "Space", 0x09 => "Tab", 0x2D => "Insert", 0x2E => "Delete", 0x24 => "Home", 0x23 => "End",
+            0x21 => "PageUp", 0x22 => "PageDown", 0x26 => "Up", 0x28 => "Down", 0x25 => "Left", 0x27 => "Right",
+            _ => null,
+        };
     }
 
     private void HotkeyField(Panel card, string label, Func<string> get, Action<string> set)
     {
-        var box = new TextBox { Text = get(), MinWidth = 200 };
-        var status = new TextBlock { Style = (Style)FindResource("RowHint"), Text = "Например Ctrl+Alt+D" };
-
-        void Commit()
+        // Поле «слушает» клавиши: набирать сочетание текстом неудобно и легко ошибиться.
+        var box = new TextBox { Text = get(), Width = 200, IsReadOnly = true, Cursor = System.Windows.Input.Cursors.Hand };
+        var ph = new TextBlock
         {
-            var text = box.Text.Trim();
-            if (text.Length > 0 && !Hotkey.TryParse(text, out _, out _))
+            Text = "Выключено", Foreground = (Brush)FindResource("FgMuted"), FontSize = 14,
+            Margin = new Thickness(10, 0, 0, 0), IsHitTestVisible = false,
+        };
+        var holder = new Grid();
+        holder.Children.Add(box);
+        holder.Children.Add(ph);
+        void Sync() => ph.Visibility = box.Text.Length == 0 && !box.IsKeyboardFocused ? Visibility.Visible : Visibility.Collapsed;
+
+        string before = get();
+        box.GotKeyboardFocus += (_, _) => { before = box.Text; box.Text = ""; ph.Text = "Нажмите сочетание…"; Sync(); ph.Visibility = Visibility.Visible; };
+        box.LostKeyboardFocus += (_, _) => { if (box.Text.Length == 0) box.Text = before; ph.Text = "Выключено"; Sync(); };
+        box.PreviewKeyDown += (_, e) =>
+        {
+            e.Handled = true;
+            var key = e.Key == System.Windows.Input.Key.System ? e.SystemKey : e.Key;
+            if (key is System.Windows.Input.Key.LeftCtrl or System.Windows.Input.Key.RightCtrl or
+                System.Windows.Input.Key.LeftAlt or System.Windows.Input.Key.RightAlt or
+                System.Windows.Input.Key.LeftShift or System.Windows.Input.Key.RightShift or
+                System.Windows.Input.Key.LWin or System.Windows.Input.Key.RWin) return;
+
+            var mods = System.Windows.Input.Keyboard.Modifiers;
+            if (key == System.Windows.Input.Key.Escape && mods == 0) { box.Text = before; System.Windows.Input.Keyboard.ClearFocus(); return; }
+            if (key == System.Windows.Input.Key.Back && mods == 0)
             {
-                status.Text = "Не удалось разобрать — оставлено прежнее.";
-                box.Text = get();
+                box.Text = "";
+                before = "";
+                Apply(() => set(""));
+                System.Windows.Input.Keyboard.ClearFocus();
                 return;
             }
-            status.Text = "Например Ctrl+Alt+D";
-            Apply(() => set(text));
-        }
 
-        box.LostFocus += (_, _) => Commit();
-        box.KeyDown += (_, e) => { if (e.Key == System.Windows.Input.Key.Enter) Commit(); };
-        _refreshers.Add(() => box.Text = get());
+            var name = KeyName(key);
+            var isF = key >= System.Windows.Input.Key.F1 && key <= System.Windows.Input.Key.F24;
+            if (name is null || (mods == 0 && !isF))
+            {
+                ph.Text = "Добавьте Ctrl, Alt или Shift";
+                ph.Visibility = Visibility.Visible;
+                return;
+            }
 
-        Row(card, label, null, box);
+            var parts = new List<string>();
+            if ((mods & System.Windows.Input.ModifierKeys.Control) != 0) parts.Add("Ctrl");
+            if ((mods & System.Windows.Input.ModifierKeys.Alt) != 0) parts.Add("Alt");
+            if ((mods & System.Windows.Input.ModifierKeys.Shift) != 0) parts.Add("Shift");
+            if ((mods & System.Windows.Input.ModifierKeys.Windows) != 0) parts.Add("Win");
+            parts.Add(name);
+            var combo = string.Join("+", parts);
+            box.Text = combo;
+            before = combo;
+            Apply(() => set(combo));
+            System.Windows.Input.Keyboard.ClearFocus();
+        };
+        _refreshers.Add(() => { box.Text = get(); Sync(); });
+        Sync();
+
+        Row(card, label, null, holder);
     }
 
     private void BuildAbout(Panel host)
@@ -773,17 +1066,27 @@ public partial class SettingsWindow : Window
     {
         if (card.Children.Count > 0) card.Children.Add(Separator());
 
-        var grid = new Grid { Margin = new Thickness(2, 13, 2, 13) };
+        // Прозрачный фон нужен, чтобы строка ловила наведение по всей ширине, а не только над текстом.
+        var grid = new Grid { Margin = new Thickness(0), Tag = label + " " + hint, Background = Brushes.Transparent };
+        // Отступы сверху и снизу — строками сетки, чтобы подсветка при наведении закрашивала всю строку.
+        grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(13) });
+        grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(13) });
+        grid.MouseEnter += (_, _) => grid.Background = (Brush)FindResource("CardHover");
+        grid.MouseLeave += (_, _) => grid.Background = Brushes.Transparent;
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
-        var text = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 16, 0) };
+        var text = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 16, 0) };
         text.Children.Add(new TextBlock { Text = label, Style = (Style)FindResource("RowLabel") });
         if (hint is not null)
             text.Children.Add(new TextBlock { Text = hint, Style = (Style)FindResource("RowHint") });
 
         Grid.SetColumn(text, 0);
         Grid.SetColumn(control, 1);
+        Grid.SetRow(text, 1);
+        Grid.SetRow(control, 1);
+        if (control is FrameworkElement fe) fe.Margin = new Thickness(fe.Margin.Left, fe.Margin.Top, fe.Margin.Right + 8, fe.Margin.Bottom);
         grid.Children.Add(text);
         grid.Children.Add(control);
 
@@ -860,24 +1163,62 @@ public partial class SettingsWindow : Window
         Row(card, label, hint, combo);
     }
 
-    private void TextRow(Panel card, string label, Func<string> get, Action<string> set, string? hint = null)
+    private void TextRow(Panel card, string label, Func<string> get, Action<string> set, string? hint = null,
+                         string? placeholder = null, bool folder = false)
     {
-        var box = new TextBox { Text = get(), MinWidth = 200 };
+        var box = new TextBox { Text = get(), Width = folder ? 210 : 260 };
+
+        // Пустое поле без подсказки выглядит как тёмный прямоугольник — непонятно, что в него писать.
+        // Ширина держателя равна ширине поля: длинная подсказка не должна растягивать строку.
+        var holder = new Grid { Width = box.Width, VerticalAlignment = VerticalAlignment.Center };
+        holder.Children.Add(box);
+        var ph = new TextBlock
+        {
+            Text = placeholder ?? "", Foreground = (Brush)FindResource("FgMuted"), FontSize = 14,
+            Margin = new Thickness(10, 0, 8, 0), IsHitTestVisible = false, TextTrimming = TextTrimming.CharacterEllipsis,
+        };
+        holder.Children.Add(ph);
+        void Sync() => ph.Visibility = placeholder is not null && box.Text.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
+        box.TextChanged += (_, _) => Sync();
+        Sync();
+
         box.LostFocus += (_, _) => Apply(() => set(box.Text));
+        box.KeyDown += (_, e) =>
+        {
+            if (e.Key == System.Windows.Input.Key.Enter) { Apply(() => set(box.Text)); System.Windows.Input.Keyboard.ClearFocus(); }
+        };
         _refreshers.Add(() => box.Text = get());
 
-        Row(card, label, hint, box);
+        UIElement control = holder;
+        if (folder)
+        {
+            var pick = new Button { Content = "Выбрать…", Style = (Style)FindResource("Action"), Padding = new Thickness(0, 7, 0, 7), Width = 100, Margin = new Thickness(8, 0, 0, 0) };
+            pick.Click += (_, _) =>
+            {
+                var dialog = new Microsoft.Win32.OpenFolderDialog { Title = label };
+                if (box.Text.Length > 0 && Directory.Exists(box.Text)) dialog.InitialDirectory = box.Text;
+                if (dialog.ShowDialog(this) == true)
+                {
+                    box.Text = dialog.FolderName;
+                    Apply(() => set(dialog.FolderName));
+                }
+            };
+            control = new StackPanel { Orientation = Orientation.Horizontal, Children = { holder, pick } };
+        }
+
+        Row(card, label, hint, control);
     }
 
-    private void ColorRow(Panel card, string label, Func<uint> get, Action<uint> set)
+    private void ColorRow(Panel card, string label, Func<uint> get, Action<uint> set, bool allowAuto = false)
     {
         var swatch = new Border
         {
             Width = 30,
             Height = 22,
             CornerRadius = new CornerRadius(6),
+            BorderBrush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(0x55, 0x50, 0x48)),
+            BorderThickness = new Thickness(1),
             Background = new SolidColorBrush(FromArgb(get())),
-            Margin = new Thickness(0, 0, 10, 0),
             VerticalAlignment = VerticalAlignment.Center,
         };
 
@@ -903,8 +1244,19 @@ public partial class SettingsWindow : Window
             swatch.Background = new SolidColorBrush(FromArgb(get()));
         });
 
+        // Нажатие на образец открывает палитру. Окно палитры кладём в тот же контейнер: так оно получает стили окна.
+        var swatchHost = new Grid { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 10, 0) };
+        swatchHost.Children.Add(swatch);
+        ColorPickerPopup.Attach(swatch, swatchHost,
+            color => Apply(() =>
+            {
+                set(color);
+                swatch.Background = new SolidColorBrush(FromArgb(color));
+            }),
+            get, allowAuto);
+
         var panel = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
-        panel.Children.Add(swatch);
+        panel.Children.Add(swatchHost);
         panel.Children.Add(box);
 
         Row(card, label, null, panel);
@@ -1042,12 +1394,12 @@ public partial class SettingsWindow : Window
     private static Color FromArgb(uint value) => Color.FromArgb(
         (byte)(value >> 24), (byte)(value >> 16), (byte)(value >> 8), (byte)value);
 
-    private static string ToHex(uint value) => value == 0 ? "по умолчанию" : "#" + value.ToString("X8");
+    private static string ToHex(uint value) => value == 0 ? "авто" : "#" + value.ToString("X8");
 
     private static bool TryParseHex(string text, out uint value)
     {
         text = text.Trim().TrimStart('#');
-        if (text.Length == 0 || text.StartsWith("по ", StringComparison.OrdinalIgnoreCase) || text == "0")
+        if (text.Length == 0 || text.StartsWith("авт", StringComparison.OrdinalIgnoreCase) || text.StartsWith("по ", StringComparison.OrdinalIgnoreCase) || text == "0")
         {
             value = 0;
             return true;
@@ -1191,6 +1543,39 @@ internal static class SettingsPreview
             Save(menu, Path.Combine(directory, "07-Меню в трее.png"));
             menu.Close();
 
+            // Палитра цвета: открываем по образцу «Цвет интерфейса» и снимаем её содержимое.
+            window.Nav.SelectedIndex = 0;
+            window.UpdateLayout();
+            Pump();
+            var swatches = new List<Border>();
+            void Collect(DependencyObject o)
+            {
+                if (o is Border { Width: 30, Height: 22 } b) swatches.Add(b);
+                foreach (var child in LogicalTreeHelper.GetChildren(o).OfType<DependencyObject>()) Collect(child);
+            }
+            Collect(window.ContentHost);
+            if (swatches.Count > 2)
+            {
+                var target = swatches[1];
+                target.RaiseEvent(new System.Windows.Input.MouseButtonEventArgs(
+                    System.Windows.Input.Mouse.PrimaryDevice, 0, System.Windows.Input.MouseButton.Left)
+                { RoutedEvent = UIElement.MouseLeftButtonUpEvent });
+                Pump();
+                if (FindLogicalPopup(target.Parent) is { Child: FrameworkElement pickerChild })
+                    SaveElement(pickerChild, Path.Combine(directory, "11-Палитра.png"));
+            }
+
+            // Поиск: выдача по слову и пустой результат.
+            foreach (var (q, file) in new[] { ("уведом", "08-Поиск.png"), ("telegram", "10-Поиск-telegram.png"), ("яяяя", "09-Поиск-пусто.png") })
+            {
+                var sw = System.Diagnostics.Stopwatch.StartNew(); window.SearchBox.Text = q; Log.Write("Поиск «" + q + "»: " + sw.ElapsedMilliseconds + " мс");
+                window.UpdateLayout();
+                Pump();
+                window.ContentScroll.ScrollToTop();
+                Pump();
+                Save(window, Path.Combine(directory, file));
+            }
+
             window.Close();
             System.Windows.Threading.Dispatcher.CurrentDispatcher.InvokeShutdown();
         });
@@ -1201,6 +1586,9 @@ internal static class SettingsPreview
     }
 
     /// <summary>Снимок отдельного элемента — например содержимого всплывающего списка.</summary>
+    private static System.Windows.Controls.Primitives.Popup? FindLogicalPopup(DependencyObject? host) =>
+        host is null ? null : LogicalTreeHelper.GetChildren(host).OfType<System.Windows.Controls.Primitives.Popup>().FirstOrDefault();
+
     private static void SaveElement(FrameworkElement element, string path)
     {
         var width = (int)Math.Ceiling(element.ActualWidth);

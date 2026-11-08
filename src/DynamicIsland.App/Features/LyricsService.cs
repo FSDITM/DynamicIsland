@@ -103,5 +103,31 @@ internal sealed partial class LyricsService : IDisposable
         return text.Length == 0 ? null : text;
     }
 
+    /// <summary>
+    /// Текущая строка и сколько секунд она уже звучит.
+    /// </summary>
+    public (string Text, float Seconds, float Length)? Current(TimeSpan position)
+    {
+        (TimeSpan At, string Text)[] lines;
+        lock (_gate) lines = _lines;
+        if (lines.Length == 0) return null;
+
+        var pos = position + TimeSpan.FromMilliseconds(250);
+        var idx = -1;
+        for (var i = 0; i < lines.Length; i++)
+        {
+            if (lines[i].At <= pos) idx = i;
+            else break;
+        }
+        if (idx < 0 || lines[idx].Text.Length == 0) return null;
+
+        var start = lines[idx].At;
+        var end = idx + 1 < lines.Length ? lines[idx + 1].At : start + TimeSpan.FromSeconds(5);
+        // Сколько секунд строка уже звучит: по этому времени, а не по доле строки, едет бегущий текст,
+        // иначе короткая строка прокручивалась бы слишком быстро.
+        var length = Math.Clamp((float)(end - start).TotalSeconds, 0.8f, 20f);
+        return (lines[idx].Text, (float)Math.Max(0, (pos - start).TotalSeconds), length);
+    }
+
     public void Dispose() => _http.Dispose();
 }

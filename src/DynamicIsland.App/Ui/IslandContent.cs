@@ -71,7 +71,97 @@ internal sealed class IslandContent : IDisposable
     public bool MouseDown { get => Ui.MouseDown; set => Ui.MouseDown = value; }
 
     /// <summary>Подсказка поверх вкладок: что сейчас играет, чьи слова и т. п. Рисуется на «Главной».</summary>
-    public Func<string?>? LyricLine { get; set; }
+    public Func<(string Text, float Seconds, float Length)?>? LyricLine { get; set; }
+
+    // Время играющей строки идёт по часам кадров, а данные плеера лишь мягко подтягивают его:
+    // плеер сообщает позицию толчками, и без сглаживания текст дёргался бы при каждой поправке.
+    private string _smoothKey = "";
+    private float _smoothTime;
+    private float _smoothPhase;
+
+    private float SmoothLineTime(string line, float reported)
+    {
+        var dt = Math.Clamp(MusicPhase - _smoothPhase, 0f, 0.1f);
+        _smoothPhase = MusicPhase;
+
+        if (line != _smoothKey || MathF.Abs(reported - _smoothTime) > 1.2f)
+        {
+            _smoothKey = line;
+            _smoothTime = reported;
+            return _smoothTime;
+        }
+
+        _smoothTime += dt;
+        _smoothTime += (reported - _smoothTime) * MathF.Min(1f, dt * 2.5f);
+        return _smoothTime;
+    }
+
+    /// <summary>
+    /// Путь 0..1 по времени 0..1: разгон на первых <paramref name="ramp"/>, ровный ход, торможение на последних.
+    /// Скорость нигде не прыгает, а на ровном участке постоянна.
+    /// </summary>
+    private static float Trapezoid(float t, float ramp)
+    {
+        var v = 1f / (1f - ramp);
+        if (t < ramp) return v * t * t / (2f * ramp);
+        if (t > 1f - ramp)
+        {
+            var r = 1f - t;
+            return 1f - v * r * r / (2f * ramp);
+        }
+        return v * (ramp / 2f + (t - ramp));
+    }
+
+    /// <summary>В этом кадре строка песни движется: цикл отрисовки идёт в такт развёртке экрана.</summary>
+    public bool LyricScrolling { get; private set; }
+
+    /// <summary>
+    /// Рисует строку в окне заданной ширины. Не влезает — плавно сдвигает её по мере пения,
+    /// так что к концу строки виден её хвост; края окна мягко гаснут.
+    /// </summary>
+    private void DrawMarquee(SKCanvas canvas, string text, SKFont font, float x, float baseline,
+                             float maxWidth, float seconds, float length, SKColor color, byte alpha, float scale)
+    {
+        var width = font.MeasureText(text);
+        _text.Color = color.WithAlpha(alpha);
+
+        if (width <= maxWidth)
+        {
+            canvas.DrawText(text, x, baseline, SKTextAlign.Left, font, _text);
+            return;
+        }
+
+        LyricScrolling = true;
+
+        // Текст едет в темпе песни: конец строки показывается ровно к тому моменту, когда её допели.
+        // Время строки сглажено (SmoothLineTime), а кривая — трапеция: плавный разгон, ровный ход,
+        // плавное торможение. Ни рывков, ни резкого старта.
+        var travel = width - maxWidth;
+        var from = length * 0.06f;
+        var span = Math.Max(0.4f, length * 0.88f);
+        var p = Math.Clamp((SmoothLineTime(text, seconds) - from) / span, 0f, 1f);
+        var offset = travel * Trapezoid(p, 0.18f);
+
+        var fade = Math.Min(14f * scale, maxWidth / 4f);
+        var area = new SKRect(x, baseline - font.Size * 1.3f, x + maxWidth, baseline + font.Size * 0.5f);
+
+        canvas.Save();
+        canvas.ClipRect(area);
+
+        // Край гаснет только там, где текст обрезан: в начале строки левый край остаётся чётким.
+        var leftEdge = offset > 1f ? 0f : 1f;
+        var rightEdge = width - maxWidth - offset > 1f ? 0f : 1f;
+        using var shader = SKShader.CreateLinearGradient(
+            new SKPoint(area.Left, 0), new SKPoint(area.Right, 0),
+            [color.WithAlpha((byte)(alpha * leftEdge)), color.WithAlpha(alpha), color.WithAlpha(alpha), color.WithAlpha((byte)(alpha * rightEdge))],
+            [0f, fade / maxWidth, 1f - fade / maxWidth, 1f], SKShaderTileMode.Clamp);
+        var saved = _text.Shader;
+        _text.Shader = shader;
+        canvas.DrawText(text, x - offset, baseline, SKTextAlign.Left, font, _text);
+        _text.Shader = saved;
+
+        canvas.Restore();
+    }
 
     private readonly SKPaint _fill = new() { Style = SKPaintStyle.Fill, IsAntialias = true };
     private readonly SKPaint _stroke = new() { Style = SKPaintStyle.Stroke, IsAntialias = true };
@@ -166,6 +256,7 @@ internal sealed class IslandContent : IDisposable
 
         UpdateTheme();
         Ui.NewFrame();
+        LyricScrolling = false;
 
         var rect = island.GetRect(stageWidth, stageHeight, scale);
         var radius = island.GetRadius(rect, scale);
@@ -345,15 +436,14 @@ internal sealed class IslandContent : IDisposable
 
         // Слова песни — в оставшемся промежутке, только если он заметный.
         if (_settings.ShowClock && media.HasSession && media.IsPlaying &&
-            LyricLine?.Invoke() is { Length: > 0 } lyric)
+            LyricLine?.Invoke() is { } lyric)
         {
             var used = rightEdge - x + (playing ? EqualizerWidth(scale) + gap : 0f);
             var max = rightEdge - used - left;
             if (max > 60f * scale)
             {
                 _fontMeta.Size = 11f * scale;
-                _text.Color = Accent.WithAlpha(a);
-                canvas.DrawText(Truncate(lyric, _fontMeta, max), left, midY, SKTextAlign.Left, _fontMeta, _text);
+                DrawMarquee(canvas, lyric.Text, _fontMeta, left, midY, max, lyric.Seconds, lyric.Length, Accent, a, scale);
             }
         }
     }
@@ -408,9 +498,12 @@ internal sealed class IslandContent : IDisposable
 
         // Слева полоса цвета события; у снимка — миниатюра. Значок без круглой подложки.
         Ui.RoundRect(new SKRect(0, 14f, 3f, bodyH - 14f), 1.5f, tint);
-        var iconBox = new SKRect(22f, bodyH / 2f - 24f, 70f, bodyH / 2f + 24f);
+        var avatarBox = card.RoundImage;
+        var iconBox = avatarBox
+            ? new SKRect(20f, bodyH / 2f - 22f, 64f, bodyH / 2f + 22f)
+            : new SKRect(22f, bodyH / 2f - 24f, 70f, bodyH / 2f + 24f);
         if (card.Image is not null)
-            Ui.Image(card.Image, iconBox, 6f);
+            Ui.Image(card.Image, iconBox, card.RoundImage ? 24f : 6f);
         else
             Ui.Glyph(card.Glyph, iconBox.Left + 12f, iconBox.MidY, 22f, tint);
 
@@ -419,7 +512,12 @@ internal sealed class IslandContent : IDisposable
         var titleY = card.Subtitle.Length > 0 || card.Progress is not null ? bodyH / 2f - 4f : bodyH / 2f + 5f;
         Ui.Text(Ui.Fit(card.Title, 14.5f, tw, bold: true), tx, titleY, 14.5f, _pal.Primary, bold: true);
         if (card.Subtitle.Length > 0)
-            Ui.Text(Ui.Fit(card.Subtitle, 12f, tw), tx, titleY + 18f, 12f, _pal.Muted);
+        {
+            // Сообщение может занять две строки: обрезать его до одной значило бы терять смысл.
+            var lines = card.TwoLines ? 2 : 1;
+            if (lines == 2) Ui.Paragraph(card.Subtitle, tx, titleY + 5f, tw, 12f, _pal.Muted, 15f, 2, ellipsis: true);
+            else Ui.Text(Ui.Fit(card.Subtitle, 12f, tw), tx, titleY + 18f, 12f, _pal.Muted);
+        }
 
         if (card.Progress is { } p)
         {
@@ -505,12 +603,11 @@ internal sealed class IslandContent : IDisposable
                 artTop + 44f * scale, SKTextAlign.Left, _fontSmall, _text);
 
             // Строка песни в такт музыке.
-            if (media.IsPlaying && LyricLine?.Invoke() is { Length: > 0 } lyric)
+            if (media.IsPlaying && LyricLine?.Invoke() is { } lyric)
             {
-                _fontSmall.Size = 11f * scale;
-                _text.Color = Accent.WithAlpha(a);
-                canvas.DrawText(Truncate(lyric, _fontSmall, available), textLeft,
-                    artTop + 60f * scale, SKTextAlign.Left, _fontSmall, _text);
+                _fontSmall.Size = 11.5f * scale;
+                DrawMarquee(canvas, lyric.Text, _fontSmall, textLeft, artTop + 61f * scale, available,
+                    lyric.Seconds, lyric.Length, Accent, a, scale);
             }
         }
         else
@@ -666,7 +763,11 @@ internal sealed class IslandContent : IDisposable
             var saved = canvas.Save();
             canvas.ClipRoundRect(round, antialias: true);
             _image.Color = SKColors.White.WithAlpha((byte)(alpha * 255));
-            canvas.DrawImage(artwork, rect, new SKSamplingOptions(SKFilterMode.Linear, SKMipmapMode.Linear), _image);
+            // Обложка вписывается с обрезкой по центру: у видео и радио она бывает 16:9,
+            // и растяжение в квадрат её уродовало.
+            var side = Math.Min(artwork.Width, artwork.Height);
+            var source = SKRect.Create((artwork.Width - side) / 2f, (artwork.Height - side) / 2f, side, side);
+            canvas.DrawImage(artwork, source, rect, new SKSamplingOptions(SKFilterMode.Linear, SKMipmapMode.Linear), _image);
             canvas.RestoreToCount(saved);
         }
         else

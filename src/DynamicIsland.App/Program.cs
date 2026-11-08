@@ -50,6 +50,65 @@ internal static class Program
             return 0;
         }
 
+        if (args.Contains("--notiftest"))
+        {
+            var report = Features.FeatureTests.NotificationProbe();
+            System.IO.File.WriteAllText(System.IO.Path.Combine(System.IO.Path.GetTempPath(), "di_notif.txt"), report);
+            return 0;
+        }
+
+        var frameIdx = Array.IndexOf(args, "--videoframe");
+        if (frameIdx >= 0 && frameIdx + 2 < args.Length)
+        {
+            try { Features.FeatureTests.VideoFrame(args[frameIdx + 1], args[frameIdx + 2]); return 0; }
+            catch (Exception ex) { Log.Write("videoframe: " + ex); return 1; }
+        }
+
+        if (args.Contains("--replydemo"))
+        {
+            Ui.ReplyWindow.Open("Анна · Работа", "Ты сможешь сегодня посмотреть макет? Нужно до вечера, если не успеваешь — скажи заранее.",
+                _ => Task.FromResult<string?>("Демо: сообщение не отправляется"));
+            Thread.Sleep(9000);
+            return 0;
+        }
+
+        var tgIdx = Array.IndexOf(args, "--tgdry");
+        if (tgIdx >= 0 && tgIdx + 3 < args.Length)
+        {
+            // --tgdry <user_id> <message_id> <заголовок чата>: открывает чат, печатает и стирает текст, не отправляя.
+            var target = new Features.TelegramTarget("user_id", long.Parse(args[tgIdx + 1]), long.Parse(args[tgIdx + 2]), args[tgIdx + 3],
+                tgIdx + 4 < args.Length ? args[tgIdx + 4] : "");
+            var error = Features.TelegramReply.SendAsync(target, "тест", dryRun: true).GetAwaiter().GetResult();
+            System.IO.File.WriteAllText(System.IO.Path.Combine(System.IO.Path.GetTempPath(), "di_tgdry.txt"), error ?? "OK");
+            return 0;
+        }
+
+        if (args.Contains("--restore-notifications"))
+        {
+            var stored = Configuration.Settings.Load();
+            Features.NotificationSetup.RestoreAll(stored);
+            stored.Save();
+            return 0;
+        }
+
+        var hideIdx = Array.IndexOf(args, "--bannertest");
+        if (hideIdx >= 0 && hideIdx + 2 < args.Length)
+        {
+            // --bannertest <часть названия> <секунд>: прячет баннеры приложения на время и возвращает.
+            var cfg = new Configuration.Settings { IslandOnlyNotifications = true, IslandOnlyApps = [args[hideIdx + 1]] };
+            Features.NotificationSetup.Apply(cfg);
+            Thread.Sleep(int.Parse(args[hideIdx + 2]) * 1000);
+            Features.NotificationSetup.RestoreAll(cfg);
+            return 0;
+        }
+
+        var lyricIdx = Array.IndexOf(args, "--snaplyrics");
+        if (lyricIdx >= 0 && lyricIdx + 1 < args.Length)
+        {
+            Ui.SnapshotTabs.RenderLyrics(args[lyricIdx + 1]);
+            return 0;
+        }
+
         var qrIdx = Array.IndexOf(args, "--makeqr");
         if (qrIdx >= 0 && qrIdx + 2 < args.Length)
         {
@@ -212,6 +271,7 @@ internal sealed class IslandApp : IDisposable
     private LyricsService _lyrics = null!;
     private CaptureController _capture = null!;
     private EventMonitor _events = null!;
+    private NotificationService _notifications = null!;
     private readonly AppIndex _index = new();
     private ClipboardService _clipboard = null!;
     private ShelfService _shelf = null!;
@@ -343,6 +403,7 @@ internal sealed class IslandApp : IDisposable
         _lyrics = new LyricsService();
         _capture = new CaptureController(_settings, _clipboard, _hub);
         _events = new EventMonitor(_settings, _hub);
+        _notifications = new NotificationService(_settings, _hub);
 
         _reminders.Changed += _window.Wake;
         _controls.Changed += _window.Wake;
@@ -355,7 +416,7 @@ internal sealed class IslandApp : IDisposable
         _content.Views[6] = new WeatherTab(_weather, _settings);
         _content.Views[7] = new ToolsTab(_capture, _clipboard, _settings, () => SettingsWindowHost.Show(_settings));
         _notes.Changed += _window.Wake;
-        _content.LyricLine = () => _settings.ShowLyrics ? _lyrics.LineAt(_media.Snapshot.EffectivePosition) : null;
+        _content.LyricLine = () => _settings.ShowLyrics ? _lyrics.Current(_media.Snapshot.EffectivePosition) : null;
 
         CommandBarHost.Init(new CommandHost
         {
@@ -421,6 +482,8 @@ internal sealed class IslandApp : IDisposable
         _controls.StartMonitoring();
         _weather.Start();
         _events.Start();
+        _ = _notifications.StartAsync();
+        if (_settings.ShowNotifications) { Features.NotificationSetup.Apply(_settings); _settings.Save(); }
         // Переменная нужна только разработчику: без неё островок не виден ни на одном снимке экрана.
         ScreenGrab.SetCaptureVisibility(_window.Handle,
             _settings.IslandInCapture || Environment.GetEnvironmentVariable("DYNAMICISLAND_SHOW_IN_CAPTURE") == "1");
@@ -530,7 +593,7 @@ internal sealed class IslandApp : IDisposable
         if (_hub.Tick()) _needsRedraw = true;
 
         _island.ExpandedTarget = _hub.Current is { } card
-            ? new Vec2(340f, card.Buttons.Count > 0 ? 112f : 76f)
+            ? new Vec2(card.TwoLines ? 380f : 340f, (card.Buttons.Count > 0 ? 112f : 76f) + (card.TwoLines ? 16f : 0f))
             : _content.ActiveTab == 0
                 ? null
                 : new Vec2(_settings.PanelWidth, _settings.PanelHeight);
@@ -617,6 +680,11 @@ internal sealed class IslandApp : IDisposable
             case nameof(Settings.MicDevice):
                 _audio.MicDevice = _settings.MicDevice;
                 break;
+            case nameof(Settings.IslandOnlyNotifications):
+            case nameof(Settings.IslandOnlyApps):
+            case nameof(Settings.ShowNotifications):
+                _pendingNotificationSetup = true;
+                break;
             case nameof(Settings.WeatherCity):
                 if (_settings.WeatherCity != _settings.WeatherCityResolved.Split(',')[0])
                     _ = _weather.SetCityAsync(_settings.WeatherCity);
@@ -660,6 +728,7 @@ internal sealed class IslandApp : IDisposable
     private volatile bool _pendingReposition;
     private volatile bool _pendingHotkey;
     private volatile bool _pendingFeatureHotkeys;
+    private volatile bool _pendingNotificationSetup;
 
     /// <summary>Применяет отложенные правки настроек в потоке отрисовки.</summary>
     private void ApplyPendingSettings()
@@ -668,6 +737,14 @@ internal sealed class IslandApp : IDisposable
         {
             _pendingReposition = false;
             RepositionStage();
+        }
+
+        if (_pendingNotificationSetup)
+        {
+            _pendingNotificationSetup = false;
+            if (_settings.ShowNotifications) Features.NotificationSetup.Apply(_settings);
+            else Features.NotificationSetup.RestoreAll(_settings);
+            _settings.Save();
         }
 
         if (_pendingFeatureHotkeys)
@@ -1200,7 +1277,11 @@ internal sealed class IslandApp : IDisposable
                 _fpsWindow.Restart();
             }
 
-            if (animating)
+            // Пока едет строка песни, кадры идут в такт развёртке экрана, как у любой анимации: иначе движение дрожит.
+            var scrolling = _content.LyricScrolling;
+            if (scrolling) _needsRedraw = true;
+
+            if (animating || scrolling)
             {
                 // Ждём готовности DXGI принять следующий кадр — привязка к развёртке.
                 OverlayWindow.WaitForInputOrHandles(waitHandles, 100);
@@ -1325,6 +1406,9 @@ internal sealed class IslandApp : IDisposable
         _hotkey.Dispose();
         _hotkeys.Dispose();
         _events.Dispose();
+        Features.NotificationSetup.RestoreAll(_settings);
+        _settings.Save();
+        _notifications.Dispose();
         _weather.Dispose();
         _controls.Dispose();
         _reminders.Dispose();
