@@ -333,6 +333,7 @@ internal sealed class MarkupWindow : Window
         }
 
         box.LostKeyboardFocus += (_, _) => Commit();
+        _pendingText = Commit;
         box.KeyDown += (_, e) =>
         {
             if (e.Key is Key.Enter or Key.Escape) { Commit(); _canvas.Focus(); e.Handled = true; }
@@ -347,9 +348,15 @@ internal sealed class MarkupWindow : Window
         _undo.RemoveAt(_undo.Count - 1);
     }
 
+    /// <summary>Надпись, которую ещё печатают: перед сохранением её надо дописать в картинку.</summary>
+    private Action? _pendingText;
+
     private byte[] Render()
     {
-        _canvas.Focus();
+        // Canvas фокус не принимает, и раньше открытое поле надписи попадало в PNG как есть —
+        // с рамкой и полупрозрачным фоном. Завершаем его явно.
+        _pendingText?.Invoke();
+        _pendingText = null;
         _canvas.Measure(new Size(_canvas.Width, _canvas.Height));
         _canvas.Arrange(new Rect(0, 0, _canvas.Width, _canvas.Height));
 

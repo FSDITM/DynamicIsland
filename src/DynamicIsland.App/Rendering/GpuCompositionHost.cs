@@ -133,6 +133,10 @@ public sealed class GpuCompositionHost : IDisposable
 
     private static IDXGIAdapter1 PickAdapter(IDXGIFactory4 factory)
     {
+        // Проверка запасного пути без отключения видеокарты.
+        if (Environment.GetEnvironmentVariable("DYNAMICISLAND_FORCE_WARP") == "1")
+            return factory.EnumWarpAdapter<IDXGIAdapter1>();
+
         // Предпочитаем адаптер с наибольшей видеопамятью среди аппаратных.
         // На ноутбуках с гибридной графикой это отсекает software-адаптер.
         if (factory.QueryInterfaceOrNull<IDXGIFactory6>() is { } f6)
@@ -156,7 +160,10 @@ public sealed class GpuCompositionHost : IDisposable
             return adapter;
         }
 
-        throw new InvalidOperationException("Не найден аппаратный DXGI-адаптер.");
+        // Видеокарты нет: удалённый рабочий стол, виртуальная машина, установка драйвера.
+        // Рисуем программно (WARP) — медленнее, но островок есть, а не окно ошибки.
+        Log.Write("Аппаратный видеоадаптер не найден, отрисовка через WARP");
+        return factory.EnumWarpAdapter<IDXGIAdapter1>();
     }
 
     private void CreateSwapChain(int width, int height)

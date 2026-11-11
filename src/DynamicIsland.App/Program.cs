@@ -183,6 +183,18 @@ internal static class Program
 
         // Второй экземпляр не нужен: две иконки в трее и два островка поверх друг друга.
         using var mutex = new Mutex(true, @"Local\DynamicIsland.SingleInstance", out var isFirst);
+
+        // После сбоя остров перезапускает себя сам; старый процесс в этот момент ещё может
+        // держать мьютекс — ждём, пока отпустит, вместо окна «уже запущен».
+        var restartIdx = Array.IndexOf(args, "--restarted");
+        var restarts = 0;
+        if (restartIdx >= 0 && restartIdx + 1 < args.Length) int.TryParse(args[restartIdx + 1], out restarts);
+        if (!isFirst && restartIdx >= 0)
+        {
+            try { isFirst = mutex.WaitOne(10000); }
+            catch (AbandonedMutexException) { isFirst = true; }
+        }
+
         if (!isFirst)
         {
             Win32.MessageBoxW(0, "DynamicIsland уже запущен.", "DynamicIsland", 0x40);
@@ -217,15 +229,38 @@ internal static class Program
         var idx = Array.IndexOf(args, "--selftest");
         if (idx >= 0 && idx + 1 < args.Length) double.TryParse(args[idx + 1], out selfTest);
 
+        // Проверка перезапуска: первый процесс падает сам через пару секунд работы.
+        IslandApp.CrashTest = restartIdx < 0 && Environment.GetEnvironmentVariable("DYNAMICISLAND_CRASHTEST") == "1";
+
+        IslandApp? app = null;
         try
         {
-            using var app = new IslandApp(selfTest, args.Contains("--settings"));
-            app.Run();
+            using (app = new IslandApp(selfTest, args.Contains("--settings")))
+                app.Run();
             return 0;
         }
         catch (Exception ex)
         {
             Log.Write("FATAL " + ex);
+
+            // Сбой уже в работе (сброс видеодрайвера, пробуждение из сна, ошибка в отрисовке):
+            // молча перезапускаемся, а не бросаем человека без островка и с окном ошибки.
+            // Не больше трёх раз подряд — иначе это не случайность, а поломка, и о ней надо сказать.
+            if (app?.StartedOk == true && selfTest <= 0 && restarts < 3)
+            {
+                try
+                {
+                    mutex.ReleaseMutex();
+                    Process.Start(Environment.ProcessPath!, $"--restarted {restarts + 1}");
+                    Log.Write("Перезапуск после сбоя, попытка " + (restarts + 1));
+                    return 1;
+                }
+                catch (Exception restartError)
+                {
+                    Log.Write("Перезапуск не удался: " + restartError.Message);
+                }
+            }
+
             Win32.MessageBoxW(0, ex.ToString(), "DynamicIsland — ошибка запуска", 0x10);
             return 1;
         }
@@ -447,6 +482,7 @@ internal sealed class IslandApp : IDisposable
         _window.RightClicked += OnRightClick;
         _window.CaptureLost += () =>
         {
+            _content.MouseDown = false;
             _scrubbing = false;
             _content.ScrubProgress = null;
             _needsRedraw = true;
@@ -456,6 +492,14 @@ internal sealed class IslandApp : IDisposable
         _window.Closed += () => _running = false;
         _window.DisplayChanged += RepositionStage;
         _window.DpiChanged += _ => RepositionStage();
+        _window.TaskbarCreated += () => _tray.Readd();
+        _window.SessionEnding += () =>
+        {
+            // Выход из системы: процесс убьют без Dispose. Баннеры уведомлений возвращаем сейчас,
+            // иначе они оставались выключенными у приложений из списка.
+            try { Features.NotificationSetup.RestoreAll(_settings); } catch (Exception ex) { Log.Write("Выход из системы: " + ex.Message); }
+            _settings.Save();
+        };
 
         // Теперь DPI известен — задаём настоящий размер сцены до создания
         // swapchain, иначе островок окажется шире окна и обрежется по краям.
@@ -488,7 +532,9 @@ internal sealed class IslandApp : IDisposable
         ScreenGrab.SetCaptureVisibility(_window.Handle,
             _settings.IslandInCapture || Environment.GetEnvironmentVariable("DYNAMICISLAND_SHOW_IN_CAPTURE") == "1");
 
-        _watcher.StateChanged += state => { _occlusion = state; _window.Wake(); };
+        // Берём текущее состояние, а не присланное: события приходят из двух потоков и могут
+        // прийти не по порядку — тогда островок залипал полоской до следующей смены окна.
+        _watcher.StateChanged += _ => { _occlusion = _watcher.State; _window.Wake(); };
         UpdateWatcherRect();
 
         _window.HotkeyPressed += OnHotkey;
@@ -1082,6 +1128,7 @@ internal sealed class IslandApp : IDisposable
         // сворачиваться нельзя.
         if (_scrubbing) return;
 
+        _content.MouseDown = false;
         UpdateCursorPresence(false);
         _needsRedraw = true;
     }
@@ -1090,6 +1137,10 @@ internal sealed class IslandApp : IDisposable
     {
         var x = _window.CursorClient.X;
         var y = _window.CursorClient.Y;
+
+        // Вкладки узнают о зажатой кнопке отсюда: без этого ползунок громкости не тянулся вовсе.
+        _content.MouseDown = down;
+        _needsRedraw = true;
 
         if (down)
         {
@@ -1206,6 +1257,10 @@ internal sealed class IslandApp : IDisposable
                 }
             }
 
+            if (CrashTest && _framesRendered > 0 && testClock.Elapsed.TotalSeconds > 3)
+                throw new InvalidOperationException("Проверочный сбой (DYNAMICISLAND_CRASHTEST)");
+
+            RenderTrash.Drain();
             ApplyPendingSettings();
             PollCursor();
             _watcher.Poll();
@@ -1394,39 +1449,50 @@ internal sealed class IslandApp : IDisposable
 
     public void Dispose()
     {
-        SettingsWindowHost.CloseIfOpen();
-        TrayMenu.CloseIfOpen();
+        // Каждый шаг отдельно: если запуск оборвался на полпути, часть полей ещё null,
+        // и одна ошибка не должна отменять остальную уборку — прежде всего возврат баннеров.
+        static void Safe(Action step)
+        {
+            try { step(); } catch (Exception ex) { Log.Write("Завершение: " + ex.Message); }
+        }
 
-        _settings.PropertyChanged -= OnSettingChanged;
-        _settings.Save();
+        Safe(() => Features.NotificationSetup.RestoreAll(_settings));
+        Safe(SettingsWindowHost.CloseIfOpen);
+        Safe(TrayMenu.CloseIfOpen);
 
-        _clockTimer?.Dispose();
-        _peekTimer?.Dispose();
-        _saveTimer?.Dispose();
-        _hotkey.Dispose();
-        _hotkeys.Dispose();
-        _events.Dispose();
-        Features.NotificationSetup.RestoreAll(_settings);
-        _settings.Save();
-        _notifications.Dispose();
-        _weather.Dispose();
-        _controls.Dispose();
-        _reminders.Dispose();
-        _lyrics.Dispose();
-        _audio.Dispose();
-        Native.RemoveClipboardFormatListener(_window.Handle);
-        Native.RevokeDragDrop(_window.Handle);
-        UiThread.Shutdown();
-        _tray.Dispose();
-        _watcher.Dispose();
-        _power.Dispose();
-        _media.DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(2));
+        Safe(() => _settings.PropertyChanged -= OnSettingChanged);
+        Safe(_settings.Save);
 
-        _artwork?.Dispose();
-        _hudPaint.Dispose();
-        _hudFont.Dispose();
-        _content.Dispose();
-        _gpu.Dispose();
-        _window.Dispose();
+        Safe(() => _clockTimer?.Dispose());
+        Safe(() => _peekTimer?.Dispose());
+        Safe(() => _saveTimer?.Dispose());
+        Safe(() => _hotkey?.Dispose());
+        Safe(() => _hotkeys?.Dispose());
+        Safe(() => _events?.Dispose());
+        Safe(() => _notifications?.Dispose());
+        Safe(() => _weather?.Dispose());
+        Safe(() => _controls?.Dispose());
+        Safe(() => _reminders?.Dispose());
+        Safe(() => _lyrics?.Dispose());
+        Safe(() => _audio?.Dispose());
+        Safe(() => Native.RemoveClipboardFormatListener(_window.Handle));
+        Safe(() => Native.RevokeDragDrop(_window.Handle));
+        Safe(UiThread.Shutdown);
+        Safe(() => _tray?.Dispose());
+        Safe(() => _watcher?.Dispose());
+        Safe(() => _power?.Dispose());
+        Safe(() => _media?.DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(2)));
+
+        Safe(() => _artwork?.Dispose());
+        Safe(() => _hudPaint?.Dispose());
+        Safe(() => _hudFont?.Dispose());
+        Safe(() => _content?.Dispose());
+        Safe(() => _gpu?.Dispose());
+        Safe(() => _window?.Dispose());
     }
+
+    internal static bool CrashTest;
+
+    /// <summary>Островок успел показать первый кадр — значит, запуск удался и сбой случился уже в работе.</summary>
+    public bool StartedOk => _framesRendered > 0;
 }

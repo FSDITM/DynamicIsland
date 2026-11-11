@@ -186,8 +186,42 @@ internal sealed class OverlayWindow : IDisposable
         Win32.SetWindowPos(Handle, Win32.HWND_TOPMOST, 0, 0, 0, 0,
             Win32.SWP_NOMOVE | Win32.SWP_NOSIZE | Win32.SWP_NOACTIVATE | Win32.SWP_NOOWNERZORDER);
 
+    /// <summary>Сообщение, которое Проводник рассылает, когда заново создаёт панель задач.</summary>
+    private static readonly uint TaskbarCreatedMessage = Win32.RegisterWindowMessageW("TaskbarCreated");
+
+    public event Action? TaskbarCreated;
+
+    /// <summary>Windows завершает сеанс: после этого процесс просто убьют, Dispose не выполнится.</summary>
+    public event Action? SessionEnding;
+
+    /// <summary>
+    /// Исключение из обработчика сообщений. Пропустить его через системный DispatchMessage нельзя —
+    /// процесс завершился бы мгновенно, без лога и без уборки. Поэтому ловим здесь, а бросаем
+    /// уже в своём цикле, где его обработают как обычное.
+    /// </summary>
+    private System.Runtime.ExceptionServices.ExceptionDispatchInfo? _pending;
+
     private nint WindowProc(nint hWnd, uint msg, nint wParam, nint lParam)
     {
+        try
+        {
+            return WindowProcCore(hWnd, msg, wParam, lParam);
+        }
+        catch (Exception ex)
+        {
+            _pending ??= System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(ex);
+            return Win32.DefWindowProcW(hWnd, msg, wParam, lParam);
+        }
+    }
+
+    private nint WindowProcCore(nint hWnd, uint msg, nint wParam, nint lParam)
+    {
+        if (msg == TaskbarCreatedMessage && msg != 0)
+        {
+            TaskbarCreated?.Invoke();
+            return 0;
+        }
+
         switch (msg)
         {
             case Win32.WM_NCHITTEST:
@@ -265,6 +299,19 @@ internal sealed class OverlayWindow : IDisposable
                 DisplayChanged?.Invoke();
                 return 0;
 
+            // Курсор у класса окна не задан, и без этого над островком оставалась форма курсора
+            // из окна под ним — например, текстовый курсор браузера.
+            case Win32.WM_SETCURSOR when (lParam & 0xFFFF) == Win32.HTCLIENT:
+                Win32.SetCursor(Win32.LoadCursorW(0, Win32.IDC_ARROW));
+                return 1;
+
+            case Win32.WM_QUERYENDSESSION:
+                return 1;
+
+            case Win32.WM_ENDSESSION when wParam != 0:
+                SessionEnding?.Invoke();
+                return 0;
+
             case Win32.WM_CLOSE:
                 Win32.DestroyWindow(hWnd);
                 return 0;
@@ -286,6 +333,12 @@ internal sealed class OverlayWindow : IDisposable
             if (msg.message == Win32.WM_QUIT) return false;
             Win32.TranslateMessage(ref msg);
             Win32.DispatchMessageW(ref msg);
+
+            if (_pending is { } pending)
+            {
+                _pending = null;
+                pending.Throw();
+            }
         }
         return true;
     }

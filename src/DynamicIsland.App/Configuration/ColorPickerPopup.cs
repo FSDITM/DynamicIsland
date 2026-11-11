@@ -34,6 +34,8 @@ internal sealed class ColorPickerPopup
     private double _s = 1;
     private double _v = 1;
     private bool _syncing;
+    private byte _alpha = 0xFF;
+    private string _shownHex = "";
     private long _closedAt;
 
     private static Brush Solid(byte r, byte g, byte b) => new SolidColorBrush(Color.FromRgb(r, g, b));
@@ -193,6 +195,11 @@ internal sealed class ColorPickerPopup
     private void CommitHex()
     {
         if (_syncing) return;
+
+        // Поле просто потеряло фокус, а код не меняли: ничего не применяем.
+        // Иначе «авто» молча превращалось в белый, стоило щёлкнуть в поле и закрыть палитру.
+        if (_hex.Text.Trim() == _shownHex) return;
+
         var text = _hex.Text.Trim().TrimStart('#');
         if (text.Length == 6) text = "FF" + text;
         if (text.Length == 8 && uint.TryParse(text, System.Globalization.NumberStyles.HexNumber, null, out var value))
@@ -210,6 +217,7 @@ internal sealed class ColorPickerPopup
     {
         // Ноль — «авто»: в палитре показываем белый, чтобы было с чего начать.
         var color = argb == 0 ? Colors.White : ToColor(argb);
+        _alpha = argb == 0 ? (byte)0xFF : color.A;
         RgbToHsv(color, out _h, out _s, out _v);
         Refresh();
     }
@@ -220,14 +228,15 @@ internal sealed class ColorPickerPopup
         _hueStop.Color = HsvToColor(_h, 1, 1);
         _areaMarker.Margin = new Thickness(_s * AreaWidth - 7, (1 - _v) * AreaHeight - 7, 0, 0);
         _hueMarker.Margin = new Thickness(Math.Clamp(_h / 360 * AreaWidth - 3, 0, AreaWidth - 6), -2, 0, -2);
-        _hex.Text = "#" + ToArgb().ToString("X8");
+        _hex.Text = _shownHex = "#" + ToArgb().ToString("X8");
         _syncing = false;
     }
 
     private uint ToArgb()
     {
         var c = HsvToColor(_h, _s, _v);
-        return 0xFF000000u | ((uint)c.R << 16) | ((uint)c.G << 8) | c.B;
+        // Прозрачность исходного цвета сохраняем: квадрат и полоса меняют только сам цвет.
+        return ((uint)_alpha << 24) | ((uint)c.R << 16) | ((uint)c.G << 8) | c.B;
     }
 
     private static Color ToColor(uint v) => Color.FromArgb((byte)(v >> 24), (byte)(v >> 16), (byte)(v >> 8), (byte)v);

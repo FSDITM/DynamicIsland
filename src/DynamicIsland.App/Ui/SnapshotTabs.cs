@@ -45,7 +45,7 @@ internal static class SnapshotTabs
         var controls = new ControlsService(settings, hub);
         var weather = new WeatherService(settings, hub);
         var capture = new CaptureController(settings, clipboard, hub);
-        capture.Colors.AddRange(["#FF453A", "#30D158", "#0A84FF", "#FFD60A"]);
+        capture.SetColorsForPreview(["#FF453A", "#30D158", "#0A84FF", "#FFD60A"]);
         views[4] = new NotesTab(notes, reminders);
         views[5] = new ControlsTab(controls, audio);
         views[6] = new WeatherTab(weather, settings);

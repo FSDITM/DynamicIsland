@@ -38,15 +38,23 @@ internal static class CaptureOverlay
 
         void Finish(RegionResult? r, System.Drawing.Color? c)
         {
-            foreach (var w in windows) w.Close();
-            windows.Clear();
+            // Сначала результат: Close ниже снова вызовет Finish через Closed, и он должен
+            // застать уже завершённую задачу.
             region.TrySetResult(r);
             color?.TrySetResult(c);
+            var open = windows.ToList();
+            windows.Clear();
+            foreach (var w in open) w.Close();
         }
 
         foreach (var shot in shots)
         {
             var w = new ShotWindow(shot, color is not null, hint, Finish);
+
+            // Окно закрыли не нашими клавишами (Alt+F4, завершение сеанса): считаем это отменой.
+            // Иначе задача не завершалась, и снимки, текст с экрана и запись переставали работать
+            // до перезапуска островка.
+            w.Closed += (_, _) => { if (windows.Count > 0) Finish(null, null); };
             windows.Add(w);
         }
         foreach (var w in windows) w.ShowOverlay();

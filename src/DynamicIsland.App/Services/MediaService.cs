@@ -118,7 +118,17 @@ internal sealed class MediaService : IAsyncDisposable
         }
     }
 
+    private readonly object _attachGate = new();
+
     private void Reattach()
+    {
+        // События списка сессий приходят с разных фоновых потоков. Без блокировки две переподписки
+        // перемешивались: сессии оставались подписанными дважды или подписанными, но вне списка —
+        // такие уже не отписать, и они держали старые плееры.
+        lock (_attachGate) ReattachLocked();
+    }
+
+    private void ReattachLocked()
     {
         try
         {
@@ -257,6 +267,8 @@ internal sealed class MediaService : IAsyncDisposable
         }
     }
 
+    private int _refreshFailures;
+
     private async Task RefreshOnceAsync()
     {
         try
@@ -321,7 +333,19 @@ internal sealed class MediaService : IAsyncDisposable
 
             Changed?.Invoke();
         }
-        catch (Exception ex) { Log.Write("MediaService.Refresh: " + ex.Message); }
+        catch (Exception ex)
+        {
+            // Пустой Message у WinRT-ошибок ничего не говорит — пишем тип, код и место.
+            var where = ex.StackTrace?.Split('\n').FirstOrDefault(l => l.Contains("DynamicIsland"))?.Trim() ?? "";
+            Log.Write($"MediaService.Refresh: {ex.GetType().Name} 0x{ex.HResult:X8} {ex.Message} {where}");
+
+            // Сессия плеера в момент смены трека бывает «полуживой»: чтение падает, а события
+            // следом может и не прийти. Без повтора остров оставался со старым треком и обложкой.
+            if (_refreshFailures++ < 3)
+                _ = Task.Run(async () => { await Task.Delay(400); _ = RefreshAsync(); });
+            return;
+        }
+        _refreshFailures = 0;
     }
 
     /// <summary>
@@ -441,13 +465,18 @@ internal sealed class MediaService : IAsyncDisposable
 
     public ValueTask DisposeAsync()
     {
-        foreach (var attached in _attached)
+        lock (_attachGate)
         {
-            attached.MediaPropertiesChanged -= OnPropertiesChanged;
-            attached.PlaybackInfoChanged -= OnPlaybackChanged;
-            attached.TimelinePropertiesChanged -= OnTimelineChanged;
+            // Без менеджера Reattach больше не подпишет новые сессии после уборки.
+            _manager = null;
+            foreach (var attached in _attached)
+            {
+                attached.MediaPropertiesChanged -= OnPropertiesChanged;
+                attached.PlaybackInfoChanged -= OnPlaybackChanged;
+                attached.TimelinePropertiesChanged -= OnTimelineChanged;
+            }
+            _attached.Clear();
         }
-        _attached.Clear();
         _session = null;
         SetArtwork(null, "");
         return ValueTask.CompletedTask;

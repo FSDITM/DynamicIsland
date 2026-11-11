@@ -34,6 +34,9 @@ internal static class NotificationSetup
 
         foreach (var token in tokens)
         {
+            // Слишком короткое слово («e», «co») зацепило бы чужие приложения, и у них пропали бы баннеры.
+            if (token.Length < 4) continue;
+
             var matches = existing.Where(k => k.Contains(token, StringComparison.OrdinalIgnoreCase)).ToList();
             if (matches.Count == 0 && KnownIds.TryGetValue(token, out var id)) matches.Add(id);
             foreach (var m in matches) if (!result.Contains(m, StringComparer.OrdinalIgnoreCase)) result.Add(m);

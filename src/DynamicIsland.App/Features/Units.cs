@@ -124,8 +124,14 @@ internal static class Units
 
     private static async Task<string?> TryCurrencyAsync(double n, string from, string to)
     {
-        var a = CurrencyAliases.GetValueOrDefault(from) ?? (from.Length == 3 ? from.ToUpperInvariant() : null);
-        var b = CurrencyAliases.GetValueOrDefault(to) ?? (to.Length == 3 ? to.ToUpperInvariant() : null);
+        // Код валюты — три латинские буквы. Любое трёхбуквенное слово («5 кот в дом») раньше уходило
+        // в запрос курсов, и без сети это стоило восьми секунд ожидания.
+        static string? Code(string word) =>
+            CurrencyAliases.GetValueOrDefault(word) ??
+            (word.Length == 3 && word.All(char.IsAsciiLetter) ? word.ToUpperInvariant() : null);
+
+        var a = Code(from);
+        var b = Code(to);
         if (a is null || b is null) return null;
 
         var rates = await GetRatesAsync();

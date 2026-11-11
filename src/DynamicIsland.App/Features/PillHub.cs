@@ -71,6 +71,7 @@ internal sealed class PillHub
             if (_current is not null && _current.Title == card.Title && !_current.Sticky)
             {
                 card.ShownAt = Environment.TickCount64;
+                Ui.RenderTrash.Add(_current.Image);
                 _current = card;
             }
             else if (_current is null)
@@ -78,7 +79,14 @@ internal sealed class PillHub
                 card.ShownAt = Environment.TickCount64;
                 _current = card;
             }
-            else _queue.Enqueue(card);
+            else
+            {
+                _queue.Enqueue(card);
+
+                // Пачка уведомлений, пока карточка висит: держим только последние, старые
+                // уже неактуальны, а их аватары занимали бы память.
+                while (_queue.Count > 12) Ui.RenderTrash.Add(_queue.Dequeue().Image);
+            }
         }
         Changed?.Invoke();
     }
@@ -87,6 +95,9 @@ internal sealed class PillHub
     {
         lock (_gate)
         {
+            // Картинка карточки принадлежит только ей; рисоваться она может ещё в этом кадре,
+            // поэтому освобождается между кадрами.
+            Ui.RenderTrash.Add(_current?.Image);
             _current = null;
             if (_queue.Count > 0)
             {

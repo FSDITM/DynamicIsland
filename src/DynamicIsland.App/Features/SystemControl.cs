@@ -214,9 +214,22 @@ internal static class SystemControl
             StandardOutputEncoding = System.Text.Encoding.UTF8,
         });
         if (p is null) return "";
-        var text = await p.StandardOutput.ReadToEndAsync();
-        await p.WaitForExitAsync();
-        return text.Trim();
+
+        // PowerShell иногда подвисает (зависший VPN-драйвер, долгий старт профиля). Без предела
+        // ожидания вкладка «Управление» переставала обновляться до перезапуска островка.
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        try
+        {
+            var text = await p.StandardOutput.ReadToEndAsync(timeout.Token);
+            await p.WaitForExitAsync(timeout.Token);
+            return text.Trim();
+        }
+        catch (OperationCanceledException)
+        {
+            try { p.Kill(entireProcessTree: true); } catch { /* уже завершился */ }
+            Log.Write($"{Path.GetFileName(file)} не ответил за 20 секунд и был остановлен");
+            return "";
+        }
     }
 
     public static async Task<string> CaptureAsync(string file, string args) => await RunCapture(file, args);

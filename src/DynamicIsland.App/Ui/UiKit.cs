@@ -137,6 +137,8 @@ internal sealed class UiKit : IDisposable
     public void Begin(SKCanvas canvas, SKRect physicalArea, float scale, float alpha, SKPoint cursorPhysical)
     {
         _canvas = canvas;
+        _listTop = float.NegativeInfinity;
+        _listSave = -1;
         Scale = scale;
         Alpha = (byte)Math.Clamp(alpha * 255f, 0f, 255f);
         Width = physicalArea.Width / scale;
@@ -164,7 +166,34 @@ internal sealed class UiKit : IDisposable
     public void Hit(SKRect local, Action? left, Action? right = null, Action? press = null)
     {
         if (_canvas is null) return;
+
+        // Строка, прокрученная под заголовок списка, не должна перехватывать его кнопки.
+        if (local.Top < _listTop) local.Top = _listTop;
+        if (local.Height <= 0) return;
+
         Hits.Add(_canvas.TotalMatrix.MapRect(local), left, right, press);
+    }
+
+    private float _listTop = float.NegativeInfinity;
+    private int _listSave = -1;
+
+    /// <summary>
+    /// Начало прокручиваемого списка: всё ниже рисуется и нажимается только под <paramref name="top"/>.
+    /// Без этого наполовину прокрученная строка залезала на заголовок вкладки вместе с областью нажатия.
+    /// </summary>
+    public void BeginList(float top)
+    {
+        if (_canvas is null) return;
+        _listSave = _canvas.Save();
+        _canvas.ClipRect(new SKRect(-1000, top, Width + 1000, Height + 1000));
+        _listTop = top;
+    }
+
+    public void EndList()
+    {
+        if (_canvas is not null && _listSave >= 0) _canvas.RestoreToCount(_listSave);
+        _listSave = -1;
+        _listTop = float.NegativeInfinity;
     }
 
     // ---------- Текст с запасными шрифтами ----------
@@ -240,9 +269,20 @@ internal sealed class UiKit : IDisposable
         return total;
     }
 
+    // Обрезка подбирается посимвольно, а списки рисуются каждый кадр: запоминаем готовые ответы.
+    private readonly Dictionary<(string, float, float, bool), string> _fitCache = [];
+
     public string Fit(string text, float size, float maxWidth, bool bold = false)
     {
         if (string.IsNullOrEmpty(text)) return "";
+        var key = (text, size, MathF.Round(maxWidth), bold);
+        if (_fitCache.TryGetValue(key, out var cached)) return cached;
+        if (_fitCache.Count > 600) _fitCache.Clear();
+        return _fitCache[key] = FitUncached(text, size, maxWidth, bold);
+    }
+
+    private string FitUncached(string text, float size, float maxWidth, bool bold)
+    {
         if (Measure(text, size, bold) <= maxWidth) return text;
 
         var limit = Math.Max(0, maxWidth - Measure("…", size, bold));

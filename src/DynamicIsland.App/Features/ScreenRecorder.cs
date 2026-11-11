@@ -185,7 +185,8 @@ internal sealed class ScreenRecorder
         var scale = Math.Min(1.0, 800.0 / width);
         var gw = Math.Max(2, (int)(width * scale));
         var gh = Math.Max(2, (int)(height * scale));
-        var frames = new List<BitmapSource>();
+        // Кадры держим сжатыми в PNG: минута несжатых кадров 800×450 — это около гигабайта памяти.
+        var frames = new List<byte[]>();
         var interval = TimeSpan.FromSeconds(1.0 / fps);
         var clock = System.Diagnostics.Stopwatch.StartNew();
         var next = TimeSpan.Zero;
@@ -202,12 +203,19 @@ internal sealed class ScreenRecorder
                 g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
                 g.DrawImage(frame, 0, 0, gw, gh);
             }
-            frames.Add(MonitorShot.ToSource(small));
+            var png = new PngBitmapEncoder();
+            png.Frames.Add(BitmapFrame.Create(MonitorShot.ToSource(small)));
+            using (var ms = new MemoryStream())
+            {
+                png.Save(ms);
+                frames.Add(ms.ToArray());
+            }
             next += interval;
         }
 
         var encoder = new GifBitmapEncoder();
-        foreach (var f in frames) encoder.Frames.Add(BitmapFrame.Create(f));
+        foreach (var f in frames)
+            encoder.Frames.Add(BitmapFrame.Create(new MemoryStream(f), BitmapCreateOptions.None, BitmapCacheOption.OnLoad));
         // Файл надо закрыть до правки: иначе PatchGif не сможет его прочитать.
         using (var fs = File.Create(path))
             encoder.Save(fs);

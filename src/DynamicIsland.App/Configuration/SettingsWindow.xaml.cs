@@ -1384,6 +1384,9 @@ public partial class SettingsWindow : Window
         try { change(); }
         finally { _updating = false; }
 
+        // Правка в обычном разделе делает заранее собранный кэш поиска устаревшим.
+        if (Nav.SelectedIndex >= 0) DropSearchCache();
+
         foreach (var refresh in _refreshers.ToArray())
         {
             // Обновление предпросмотра не должно ронять окно из-за одной строки.
@@ -1428,7 +1431,11 @@ public partial class SettingsWindow : Window
         if (answer != MessageBoxResult.OK) return;
 
         _settings.ResetToDefaults();
-        OnSectionChanged(this, null!);
+
+        // Во время поиска раздел не выбран, и OnSectionChanged ничего бы не перерисовал.
+        DropSearchCache();
+        if (SearchBox.Text.Trim().Length > 0) RunSearch(SearchBox.Text.Trim());
+        else OnSectionChanged(this, null!);
     }
 }
 

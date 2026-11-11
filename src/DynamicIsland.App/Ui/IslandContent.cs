@@ -283,7 +283,8 @@ internal sealed class IslandContent : IDisposable
         if (expand < 0.99f) DrawRestLayer(canvas, rect, scale, media, power, alpha * (1f - expand));
         if (expand > 0.01f) DrawExpandedLayer(canvas, rect, scale, media, artwork, power, alpha * expand);
 
-        _controlsVisible = expand > 0.5f;
+        // Пока на месте плеера карточка события, кнопок плеера нет — и нажатия по ним тоже.
+        _controlsVisible = expand > 0.5f && Hub?.Current is null;
         canvas.RestoreToCount(saved);
     }
 

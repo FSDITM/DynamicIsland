@@ -76,6 +76,7 @@ internal static partial class ReminderParser
 
         var rest = text;
         DateTime? date = null;
+        var byWeekday = false;
         TimeSpan? time = null;
         TimeSpan? relative = null;
         var repeat = Repeat.None;
@@ -162,6 +163,7 @@ internal static partial class ReminderParser
                     if (!wd.Success || wd.Groups[2].Value.Length < 2) continue;
                     var delta = ((int)day - (int)today.DayOfWeek + 7) % 7;
                     date = today.AddDays(delta);
+                    byWeekday = true;
                     rest = rest.Remove(wd.Index, wd.Length);
                     break;
                 }
@@ -203,7 +205,10 @@ internal static partial class ReminderParser
         else if (date is { } d)
         {
             at = d + (time ?? new TimeSpan(9, 0, 0));
-            if (at <= now && date == now.Date) at = at.AddDays(0);
+            // Время сегодня уже прошло: «в понедельник в 9», сказанное в понедельник в 10, — это
+            // следующий понедельник; «сегодня в 9» в 10 — завтра. Раньше карточка «пропущено»
+            // показывалась сразу же.
+            if (at <= now && date == now.Date) at = at.AddDays(byWeekday ? 7 : 1);
         }
         else if (time is { } tOnly)
         {
@@ -458,7 +463,11 @@ internal sealed class ReminderService : IDisposable
             var list = JsonSerializer.Deserialize<List<Reminder>>(File.ReadAllText(StorePath)) ?? [];
             _items.AddRange(list);
         }
-        catch (Exception ex) { Log.Write("Напоминания не прочитаны: " + ex.Message); }
+        catch (Exception ex)
+        {
+            Log.Write("Напоминания не прочитаны: " + ex.Message);
+            SafeFile.KeepBroken(StorePath);
+        }
     }
 
     private void Save()
@@ -467,8 +476,7 @@ internal sealed class ReminderService : IDisposable
         {
             List<Reminder> copy;
             lock (_gate) copy = [.. _items];
-            Directory.CreateDirectory(Path.GetDirectoryName(StorePath)!);
-            File.WriteAllText(StorePath, JsonSerializer.Serialize(copy));
+            SafeFile.WriteAllText(StorePath, JsonSerializer.Serialize(copy));
         }
         catch (Exception ex) { Log.Write("Напоминания не сохранены: " + ex.Message); }
     }

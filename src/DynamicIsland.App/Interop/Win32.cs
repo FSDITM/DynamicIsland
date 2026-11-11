@@ -173,6 +173,20 @@ internal static class Win32
     [DllImport("user32.dll")]
     public static extern void PostQuitMessage(int nExitCode);
 
+    public const uint WM_SETCURSOR = 0x0020;
+    public const uint WM_QUERYENDSESSION = 0x0011;
+    public const uint WM_ENDSESSION = 0x0016;
+    public const int IDC_ARROW = 32512;
+
+    [DllImport("user32.dll")]
+    public static extern nint SetCursor(nint hCursor);
+
+    [DllImport("user32.dll")]
+    public static extern nint LoadCursorW(nint hInstance, nint lpCursorName);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern uint RegisterWindowMessageW(string lpString);
+
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     public static extern bool PostMessageW(nint hWnd, uint msg, nint wParam, nint lParam);
 

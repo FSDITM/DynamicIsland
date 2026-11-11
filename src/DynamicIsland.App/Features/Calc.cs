@@ -50,6 +50,9 @@ internal static class Calc
             {
                 var op = s[_i++];
                 var r = ParseTerm();
+
+                // «200 + 15%» — это 200 плюс 15% от 200, как в обычном калькуляторе.
+                if (_percent) r *= v;
                 v = op == '+' ? v + r : v - r;
             }
             return v;
@@ -57,9 +60,11 @@ internal static class Calc
 
         private double ParseTerm()
         {
+            _percent = false;
             var v = ParsePower();
             while (Peek is '*' or '/' or '%')
             {
+                _percent = false;
                 var op = s[_i++];
                 var r = ParsePower();
                 v = op switch
@@ -143,7 +148,21 @@ internal static class Calc
             throw new FormatException();
         }
 
-        // «200 + 15%» читается как «200 + 15% от 200» — как в обычном калькуляторе.
-        private double PostPercent(double v) => v;
+        /// <summary>Последнее слагаемое было процентом («15%»), а не числом.</summary>
+        private bool _percent;
+
+        /// <summary>
+        /// Знак % сразу после числа — процент, если за ним не идёт ещё одно число (тогда это остаток
+        /// от деления: «10 % 3»). «15%» — это 0,15; «200 + 15%» разбирается в ParseExpression.
+        /// </summary>
+        private double PostPercent(double v)
+        {
+            if (Peek != '%') return v;
+            var next = _i + 1 < s.Length ? s[_i + 1] : '\0';
+            if (char.IsDigit(next) || next is '.' or '(' || char.IsLetter(next)) return v;
+            _i++;
+            _percent = true;
+            return v / 100;
+        }
     }
 }

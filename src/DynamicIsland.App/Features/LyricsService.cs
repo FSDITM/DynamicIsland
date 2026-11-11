@@ -12,7 +12,6 @@ internal sealed partial class LyricsService : IDisposable
     private readonly Lock _gate = new();
     private string _key = "";
     private (TimeSpan At, string Text)[] _lines = [];
-    private int _busy;
 
     public event Action? Changed;
 
@@ -33,12 +32,18 @@ internal sealed partial class LyricsService : IDisposable
         lock (_gate)
         {
             if (key == _key) return;
+
+            // Сеть подвела — не долбим сервер на каждое событие плеера, пробуем снова через полминуты.
+            if (key == _failedKey && DateTime.UtcNow < _retryAfter) return;
+
             _key = key;
             _lines = [];
         }
 
-        if (title.Length == 0 || Interlocked.Exchange(ref _busy, 1) == 1) return;
+        if (title.Length == 0) return;
 
+        // Каждый трек грузится сам по себе. Раньше второй запрос не запускался, пока шёл первый,
+        // и при быстром переключении треков текст для нового так и не приходил.
         _ = Task.Run(async () =>
         {
             try
@@ -48,10 +53,21 @@ internal sealed partial class LyricsService : IDisposable
                     if (_key == key) _lines = lines;
                 Changed?.Invoke();
             }
-            catch (Exception ex) { Log.Write("Текст песни не получен: " + ex.Message); }
-            finally { Interlocked.Exchange(ref _busy, 0); }
+            catch (Exception ex)
+            {
+                Log.Write("Текст песни не получен: " + ex.Message);
+                lock (_gate)
+                {
+                    if (_key == key) _key = "";
+                    _failedKey = key;
+                    _retryAfter = DateTime.UtcNow.AddSeconds(30);
+                }
+            }
         });
     }
+
+    private string _failedKey = "";
+    private DateTime _retryAfter;
 
     private async Task<(TimeSpan, string)[]> FetchAsync(string artist, string title, TimeSpan duration)
     {

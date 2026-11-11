@@ -62,6 +62,7 @@ internal sealed class ClipboardTab(ClipboardService clipboard) : ITabView
         }
 
         var listW = ui.Width - 10f;
+        ui.BeginList(top);
         for (var i = 0; i < ordered.Count; i++)
         {
             var e = ordered[i];
@@ -87,6 +88,11 @@ internal sealed class ClipboardTab(ClipboardService clipboard) : ITabView
             if (e.Pinned && !hover) ui.Glyph(G.Pinned, listW - 66, y + RowH / 2, 12, ui.Accent);
 
             var entry = e;
+
+            // Строка регистрируется раньше кнопок: нажатия проверяются с конца, и иначе
+            // «закрепить» и «удалить» перехватывала строка — вместо удаления шла вставка.
+            ui.Hit(row, () => clipboard.Paste(entry), () => clipboard.TogglePin(entry));
+
             if (hover)
             {
                 var pin = new SKRect(listW - 58, y + 8, listW - 34, y + RowH - 8);
@@ -94,10 +100,9 @@ internal sealed class ClipboardTab(ClipboardService clipboard) : ITabView
                 ui.IconButton(pin, entry.Pinned ? G.Pinned : G.Pin, () => clipboard.TogglePin(entry), entry.Pinned);
                 ui.IconButton(del, G.Delete, () => clipboard.Remove(entry));
             }
-
-            ui.Hit(row, () => clipboard.Paste(entry), () => clipboard.TogglePin(entry));
         }
 
+        ui.EndList();
         ui.Scrollbar(new SKRect(ui.Width - 4, top, ui.Width, ui.Height - 2), _scroll, _content, view);
     }
 }

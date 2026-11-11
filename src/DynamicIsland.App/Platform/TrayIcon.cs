@@ -56,6 +56,16 @@ internal sealed class TrayIcon : IDisposable
         _added = Win32.Shell_NotifyIconW(Win32.NIM_ADD, ref _data);
     }
 
+    /// <summary>
+    /// Проводник перезапустился и забыл все значки — добавляем свой заново.
+    /// Без этого после падения explorer.exe значок пропадал до перезапуска островка.
+    /// </summary>
+    public void Readd()
+    {
+        if (_data.hWnd == 0) return;
+        _added = Win32.Shell_NotifyIconW(Win32.NIM_ADD, ref _data);
+    }
+
     public void SetTooltip(string tooltip)
     {
         if (!_added) return;

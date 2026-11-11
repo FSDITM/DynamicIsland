@@ -92,6 +92,11 @@ internal static class FeatureTests
         Check("calc 2^10", Calc.TryEvaluate("2^10", out v) ? v : double.NaN, 1024d);
         Check("calc sqrt(16)", Calc.TryEvaluate("sqrt(16)", out v) ? v : double.NaN, 4d);
         Check("calc 1,5*2", Calc.TryEvaluate("1,5*2", out v) ? v : double.NaN, 3d);
+        Check("calc 200+15%", Calc.TryEvaluate("200+15%", out v) ? v : double.NaN, 230d);
+        Check("calc 200-10%", Calc.TryEvaluate("200-10%", out v) ? v : double.NaN, 180d);
+        Check("calc 15%", Calc.TryEvaluate("15%", out v) ? v : double.NaN, 0.15);
+        Check("calc 50*20%", Calc.TryEvaluate("50*20%", out v) ? v : double.NaN, 10d);
+        Check("calc 10%3 остаток", Calc.TryEvaluate("10%3", out v) ? v : double.NaN, 1d);
         Check("calc слово не выражение", Calc.TryEvaluate("hello", out _), false);
         Check("calc число не выражение", Calc.TryEvaluate("42", out _), false);
         Check("calc firefox не выражение", Calc.TryEvaluate("firefox", out _), false);
@@ -115,6 +120,8 @@ internal static class FeatureTests
         P("через час чай", "Чай", new DateTime(2026, 11, 7, 13, 0, 0));
         P("в 11 позвонить", "Позвонить", new DateTime(2026, 11, 8, 11, 0, 0));
         P("напомни через полчаса", "Напоминание", new DateTime(2026, 11, 7, 12, 30, 0));
+        P("напомни сегодня в 9 полить цветы", "Полить цветы", new DateTime(2026, 11, 8, 9, 0, 0));
+        P("напомни в субботу в 9 выпить чай", "Выпить чай", new DateTime(2026, 11, 14, 9, 0, 0));
         Check("напоминание без времени", ReminderParser.Parse("просто текст", now), null);
 
         // Таймер

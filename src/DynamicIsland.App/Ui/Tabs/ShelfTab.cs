@@ -8,6 +8,29 @@ namespace DynamicIsland.Ui.Tabs;
 internal sealed class ShelfTab(ShelfService shelf) : ITabView
 {
     private float _scroll;
+
+    // Диск спрашиваем не каждый кадр, а раз в несколько секунд: файл с отключённого
+    // сетевого диска иначе замораживал отрисовку островка.
+    private readonly Dictionary<string, (bool IsDir, string Size, long At)> _info = [];
+
+    private (bool IsDir, string Size) Info(string path)
+    {
+        var now = Environment.TickCount64;
+        if (_info.TryGetValue(path, out var c) && now - c.At < 5000) return (c.IsDir, c.Size);
+
+        var isDir = false;
+        var size = "";
+        try
+        {
+            isDir = Directory.Exists(path);
+            if (!isDir) size = Fmt.Size(new FileInfo(path).Length);
+        }
+        catch { /* файл мог исчезнуть */ }
+
+        if (_info.Count > 200) _info.Clear();
+        _info[path] = (isDir, size, now);
+        return (isDir, size);
+    }
     private float _content;
 
     /// <summary>Что начнут тащить, если мышь сдвинется с зажатой кнопкой. Ставит нажатие.</summary>
@@ -51,6 +74,7 @@ internal sealed class ShelfTab(ShelfService shelf) : ITabView
         _scroll = Math.Clamp(_scroll, 0, Math.Max(0, _content - view));
         var listW = ui.Width - 10f;
 
+        ui.BeginList(top);
         for (var i = 0; i < files.Count; i++)
         {
             var path = files[i];
@@ -61,12 +85,10 @@ internal sealed class ShelfTab(ShelfService shelf) : ITabView
             var hover = ui.IsHover(row) && ui.Cursor.Y > top;
             ui.Row(row, hover);
 
-            var isDir = Directory.Exists(path);
+            var (isDir, sub) = Info(path);
             ui.Glyph(isDir ? G.Folder : G.File, 16, row.MidY + 2f, 15, isDir ? ui.Accent : pal.Muted);
             ui.Text(ui.Fit(Path.GetFileName(path), 12.5f, listW - 150f), 36, row.MidY + 4.5f, 12.5f, pal.Primary);
 
-            var sub = "";
-            try { if (!isDir) sub = Fmt.Size(new FileInfo(path).Length); } catch { /* файл мог исчезнуть */ }
             if (!hover) ui.Text(sub, listW - 10, row.MidY + 4, 10.5f, pal.Muted, SKTextAlign.Right);
 
             var p = path;
@@ -74,6 +96,7 @@ internal sealed class ShelfTab(ShelfService shelf) : ITabView
             if (hover) ui.IconButton(new SKRect(listW - 30, row.Top + 5, listW - 6, row.Bottom - 5), G.Close, () => shelf.Remove(p));
         }
 
+        ui.EndList();
         ui.Scrollbar(new SKRect(ui.Width - 4, top, ui.Width, ui.Height - 2), _scroll, _content, view);
     }
 

@@ -21,7 +21,7 @@ internal sealed class TextTab(ClipboardService clipboard, Configuration.Settings
     public void Activated()
     {
         Refresh();
-        _qr?.Dispose();
+        RenderTrash.Add(_qr);
         _qr = null;
     }
 

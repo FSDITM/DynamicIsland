@@ -25,14 +25,19 @@ internal sealed class ClipEntry : IDisposable
     public bool Pinned { get; set; }
     public SKImage? Thumb { get; set; }
 
-    public string Preview => Kind switch
+    // Считается один раз и только по началу текста: строку списка рисуют каждый кадр,
+    // а скопировать могли и двести тысяч символов.
+    private string? _preview;
+
+    public string Preview => _preview ??= Kind switch
     {
         ClipKind.Image => $"Изображение {Width}×{Height}",
         ClipKind.Files => Files.Length == 1 ? Path.GetFileName(Files[0]) : $"{Files.Length} файлов",
-        _ => Text.Replace("\r", "").Replace('\n', ' ').Replace('\t', ' ').Trim(),
+        _ => (Text.Length > 400 ? Text[..400] : Text).Replace("\r", "").Replace('\n', ' ').Replace('\t', ' ').Trim(),
     };
 
-    public void Dispose() => Thumb?.Dispose();
+    // Миниатюру в эту же секунду может рисовать поток островка — освобождаем её между кадрами.
+    public void Dispose() => Ui.RenderTrash.Add(Thumb);
 }
 
 /// <summary>
@@ -239,14 +244,16 @@ internal sealed class ClipboardService
     /// <summary>Положить запись в буфер и нажать Ctrl+V в активном окне.</summary>
     public void Paste(ClipEntry entry, bool plain = false) => UiThread.Post(() =>
     {
-        WriteToClipboard(entry, plain);
+        // Буфер занят другой программой и запись не удалась: Ctrl+V вставил бы прежнее содержимое,
+        // а это мог быть, например, пароль.
+        if (!WriteToClipboard(entry, plain)) return;
         Thread.Sleep(40);
         Native.SendPaste();
     });
 
     public void CopyOnly(ClipEntry entry) => UiThread.Post(() => WriteToClipboard(entry, false));
 
-    private void WriteToClipboard(ClipEntry entry, bool plain)
+    private bool WriteToClipboard(ClipEntry entry, bool plain)
     {
         for (var attempt = 0; attempt < 6; attempt++)
         {
@@ -276,10 +283,12 @@ internal sealed class ClipboardService
                         break;
                 }
                 _ignoreSeq = Native.GetClipboardSequenceNumber();
-                return;
+                return true;
             }
             catch (COMException) { Thread.Sleep(30); }
         }
+        Log.Write("Буфер обмена занят другой программой, запись не удалась");
+        return false;
     }
 
     /// <summary>Вставить текст из буфера без форматирования.</summary>
@@ -293,7 +302,7 @@ internal sealed class ClipboardService
         }
         if (string.IsNullOrEmpty(text)) return;
 
-        WriteToClipboard(new ClipEntry { Kind = ClipKind.Text, Text = text }, true);
+        if (!WriteToClipboard(new ClipEntry { Kind = ClipKind.Text, Text = text }, true)) return;
         Thread.Sleep(40);
         Native.SendPaste();
     });
@@ -358,7 +367,11 @@ internal sealed class ClipboardService
             foreach (var p in list)
                 _items.Add(new ClipEntry { Id = _nextId++, Kind = ClipKind.Text, Text = p.Text, Time = p.Time, Pinned = true });
         }
-        catch (Exception ex) { Log.Write("Закреплённые записи не прочитаны: " + ex.Message); }
+        catch (Exception ex)
+        {
+            Log.Write("Закреплённые записи не прочитаны: " + ex.Message);
+            SafeFile.KeepBroken(StorePath);
+        }
     }
 
     private void SavePinned()
@@ -370,7 +383,7 @@ internal sealed class ClipboardService
                 list = _items.Where(e => e.Pinned && e.Kind == ClipKind.Text)
                              .Select(e => new PinnedRecord(e.Text, e.Time)).ToList();
             Directory.CreateDirectory(Path.GetDirectoryName(StorePath)!);
-            File.WriteAllText(StorePath, JsonSerializer.Serialize(list));
+            SafeFile.WriteAllText(StorePath, JsonSerializer.Serialize(list));
         }
         catch (Exception ex) { Log.Write("Закреплённые записи не сохранены: " + ex.Message); }
     }

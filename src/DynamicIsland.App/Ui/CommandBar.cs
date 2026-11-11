@@ -271,8 +271,19 @@ internal sealed class CommandBarWindow : Window
                 e.Handled = true;
                 break;
             case Key.Enter:
-                Execute(Keyboard.Modifiers);
                 e.Handled = true;
+                var modifiers = Keyboard.Modifiers;
+
+                // Набрали и сразу нажали Enter, а результаты ещё не пересчитаны (ждут 70 мс):
+                // считаем сейчас, иначе выполнился бы первый пункт для прежнего текста.
+                if (_debounce.IsEnabled)
+                {
+                    _debounce.Stop();
+                    _ = RunQuery().ContinueWith(_ => Dispatcher.BeginInvoke(() => Execute(modifiers)),
+                        TaskScheduler.FromCurrentSynchronizationContext());
+                    break;
+                }
+                Execute(modifiers);
                 break;
         }
     }

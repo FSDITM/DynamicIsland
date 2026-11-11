@@ -73,6 +73,7 @@ internal sealed class NotesTab(NotesService notes, ReminderService reminders) : 
             return;
         }
 
+        ui.BeginList(top);
         for (var i = 0; i < items.Count; i++)
         {
             var n = items[i];
@@ -89,6 +90,7 @@ internal sealed class NotesTab(NotesService notes, ReminderService reminders) : 
             ui.Hit(row, () => NoteEditorHost.Open(notes, note.Id));
         }
 
+        ui.EndList();
         ui.Scrollbar(new SKRect(w - 3, top, w, ui.Height - 2), _scroll, content, view);
     }
 

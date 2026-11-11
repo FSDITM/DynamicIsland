@@ -77,7 +77,11 @@ internal sealed class WeatherService : IDisposable
     public void Refresh()
     {
         if (!HasCity) { Changed?.Invoke(); return; }
-        if (Interlocked.Exchange(ref _busy, 1) == 1) return;
+
+        // Обновление уже идёт — просим повторить после него: город или единицы могли смениться,
+        // и без повтора до получаса показывался прогноз для прежнего города.
+        if (Interlocked.Exchange(ref _busy, 1) == 1) { _again = true; return; }
+        _again = false;
 
         _ = Task.Run(async () =>
         {
@@ -110,9 +114,12 @@ internal sealed class WeatherService : IDisposable
                 Interlocked.Exchange(ref _busy, 0);
                 UpdateChipAndWarning();
                 Changed?.Invoke();
+                if (_again) Refresh();
             }
         });
     }
+
+    private volatile bool _again;
 
     private void Parse(JsonElement root)
     {

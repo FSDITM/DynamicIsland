@@ -18,7 +18,12 @@ internal sealed class CaptureController
     private int _busy;
 
     public ScreenRecorder Recorder { get; }
-    public List<string> Colors { get; } = [];
+    // Список подменяется целиком: вкладка «Инструменты» перебирает его в потоке отрисовки,
+    // пока пипетка дописывает цвет с другого потока.
+    public IReadOnlyList<string> Colors { get; private set; } = [];
+
+    /// <summary>Для снимков вкладки: заранее заполненная история цветов.</summary>
+    internal void SetColorsForPreview(IEnumerable<string> colors) => Colors = colors.ToList();
 
     public event Action? Changed;
 
@@ -196,9 +201,8 @@ internal sealed class CaptureController
             if (picked is not { } c) return;
 
             var hex = $"#{c.R:X2}{c.G:X2}{c.B:X2}";
-            Colors.Remove(hex);
-            Colors.Insert(0, hex);
-            if (Colors.Count > 12) Colors.RemoveAt(Colors.Count - 1);
+            var next = Colors.Where(c => c != hex).Prepend(hex).Take(12).ToList();
+            Colors = next;
 
             _clipboard.SetText(hex);
             Changed?.Invoke();

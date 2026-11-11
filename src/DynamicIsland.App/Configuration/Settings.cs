@@ -166,7 +166,7 @@ internal sealed class Settings : INotifyPropertyChanged
     /// <summary>Приводит список к виду «без .exe, без пустых, без повторов».</summary>
     private static string[] Normalize(string[]? apps) => apps is null
         ? []
-        : apps.Select(a => a.Trim())
+        : apps.Where(a => a is not null).Select(a => a.Trim())
               .Where(a => a.Length > 0)
               .Select(a => a.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ? a[..^4] : a)
               .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -361,7 +361,8 @@ internal sealed class Settings : INotifyPropertyChanged
     public string[] IslandOnlyApps { get => _islandOnlyApps; set => Set(ref _islandOnlyApps, value ?? []); }
 
     /// <summary>Прежнее значение «показывать баннер» для каждого приложения: -1 — значения не было.</summary>
-    public Dictionary<string, int> BannerBackup { get; set; } = [];
+    public Dictionary<string, int> BannerBackup { get => _bannerBackup; set => _bannerBackup = value ?? []; }
+    private Dictionary<string, int> _bannerBackup = [];
 
         // ---------- Telegram ----------
 
@@ -395,8 +396,23 @@ internal sealed class Settings : INotifyPropertyChanged
             if (File.Exists(FilePath))
             {
                 var json = File.ReadAllText(FilePath);
-                var loaded = JsonSerializer.Deserialize<Settings>(json, JsonOptions);
-                if (loaded is not null) return loaded;
+                try
+                {
+                    var loaded = JsonSerializer.Deserialize<Settings>(json, JsonOptions);
+                    if (loaded is not null) return loaded;
+                }
+                catch (JsonException ex)
+                {
+                    // Одно испорченное поле (скажем, значение из другой версии) не повод терять
+                    // все настройки: выбрасываем только его. Исходный файл сохраняем рядом.
+                    Log.Write("Настройки: " + ex.Message);
+                    File.Copy(FilePath, FilePath + ".bad", overwrite: true);
+                    if (Salvage(json) is { } salvaged)
+                    {
+                        salvaged.Save();
+                        return salvaged;
+                    }
+                }
             }
         }
         catch (Exception ex)
@@ -412,17 +428,51 @@ internal sealed class Settings : INotifyPropertyChanged
         return defaults;
     }
 
+    /// <summary>Убирает из JSON поля, которые не разбираются, пока остальное не прочитается.</summary>
+    private static Settings? Salvage(string json)
+    {
+        try
+        {
+            if (System.Text.Json.Nodes.JsonNode.Parse(json) is not System.Text.Json.Nodes.JsonObject obj) return null;
+            for (var attempt = 0; attempt < 20; attempt++)
+            {
+                try
+                {
+                    return obj.Deserialize<Settings>(JsonOptions);
+                }
+                catch (JsonException ex) when (ex.Path is { Length: > 2 } path)
+                {
+                    var name = path[2..].Split('.', '[')[0];
+                    if (!obj.Remove(name)) return null;
+                    Log.Write("Настройки: поле «" + name + "» сброшено к значению по умолчанию");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Write("Настройки не восстановлены: " + ex.Message);
+        }
+        return null;
+    }
+
+    private static readonly object SaveGate = new();
+
     public void Save()
     {
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(FilePath)!);
 
-            // Пишем во временный файл и подменяем: обрыв записи не оставит
-            // пользователя с нечитаемым файлом настроек.
-            var temp = FilePath + ".tmp";
-            File.WriteAllText(temp, JsonSerializer.Serialize(this, JsonOptions));
-            File.Move(temp, FilePath, overwrite: true);
+            // Сохраняют из разных потоков (отрисовка, таймер, окно настроек): по одному,
+            // иначе две записи дрались за один временный файл и одна молча терялась.
+            lock (SaveGate)
+            {
+                // Пишем во временный файл и подменяем: обрыв записи не оставит
+                // пользователя с нечитаемым файлом настроек.
+                var temp = FilePath + ".tmp";
+                File.WriteAllText(temp, JsonSerializer.Serialize(this, JsonOptions));
+                File.Move(temp, FilePath, overwrite: true);
+            }
         }
         catch (Exception ex)
         {
@@ -437,6 +487,10 @@ internal sealed class Settings : INotifyPropertyChanged
         foreach (var p in typeof(Settings).GetProperties())
         {
             if (!p.CanWrite || !p.CanRead) continue;
+
+            // Это не настройка, а память о чужих значениях реестра: без неё баннеры мессенджеров
+            // после сброса уже не вернуть.
+            if (p.Name == nameof(BannerBackup)) continue;
             p.SetValue(this, p.GetValue(d));
         }
     }

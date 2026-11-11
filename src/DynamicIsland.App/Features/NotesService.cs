@@ -106,7 +106,11 @@ internal sealed class NotesService
             // Пустые заметки остаются от прежних версий, где «Новая» создавала запись сразу.
             _notes.RemoveAll(n => string.IsNullOrWhiteSpace(n.Plain));
         }
-        catch (Exception ex) { Log.Write("Заметки не прочитаны: " + ex.Message); }
+        catch (Exception ex)
+        {
+            Log.Write("Заметки не прочитаны: " + ex.Message);
+            SafeFile.KeepBroken(StorePath);
+        }
     }
 
     private void Save()
@@ -116,9 +120,7 @@ internal sealed class NotesService
             List<Note> copy;
             lock (_gate) copy = [.. _notes];
             Directory.CreateDirectory(Path.GetDirectoryName(StorePath)!);
-            var temp = StorePath + ".tmp";
-            File.WriteAllText(temp, JsonSerializer.Serialize(copy));
-            File.Move(temp, StorePath, overwrite: true);
+            SafeFile.WriteAllText(StorePath, JsonSerializer.Serialize(copy));
         }
         catch (Exception ex) { Log.Write("Заметки не сохранены: " + ex.Message); }
     }

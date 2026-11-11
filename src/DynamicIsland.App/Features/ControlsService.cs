@@ -101,18 +101,28 @@ internal sealed class ControlsService : IDisposable
         });
     }
 
+    private readonly object _vpnGate = new();
+    private int _vpnGeneration;
+
     private void CheckVpn()
     {
-        var up = SystemControl.IsVpnUp();
-        if (up == VpnUp && !_vpnFirst) return;
+        // Проверку зовут таймер, события сети и кнопка — из разных потоков одновременно.
+        bool up, first;
+        int generation;
+        lock (_vpnGate)
+        {
+            up = SystemControl.IsVpnUp();
+            if (up == VpnUp && !_vpnFirst) return;
 
-        VpnUp = up;
-        var changed = up != _vpnWasUp || _vpnFirst;
-        var first = _vpnFirst;
-        _vpnWasUp = up;
-        _vpnFirst = false;
+            VpnUp = up;
+            var changed = up != _vpnWasUp || _vpnFirst;
+            first = _vpnFirst;
+            _vpnWasUp = up;
+            _vpnFirst = false;
 
-        if (!changed) return;
+            if (!changed) return;
+            generation = ++_vpnGeneration;
+        }
 
         if (!up)
         {
@@ -127,6 +137,10 @@ internal sealed class ControlsService : IDisposable
         _ = Task.Run(async () =>
         {
             var (country, code, ip) = await LookupAsync();
+
+            // Пока узнавали страну, VPN уже успели выключить: зелёный чип поставить нельзя,
+            // его потом никто бы не снял.
+            if (generation != Volatile.Read(ref _vpnGeneration)) return;
             VpnInfo = country.Length > 0 ? $"{country} · {ip}" : "";
             if (!_settings.EventVpn) { Changed?.Invoke(); return; }
 

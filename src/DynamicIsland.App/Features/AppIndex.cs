@@ -20,6 +20,7 @@ internal sealed class AppIndex
     private List<IndexEntry> _recent = [];
     private int _started;
     private DateTime _filesBuiltAt = DateTime.MinValue;
+    private int _filesBuilding;
 
     public bool Ready { get; private set; }
 
@@ -27,8 +28,18 @@ internal sealed class AppIndex
     {
         if (Interlocked.Exchange(ref _started, 1) == 0)
             _ = Task.Run(BuildAll);
-        else if (DateTime.Now - _filesBuiltAt > TimeSpan.FromMinutes(10))
-            _ = Task.Run(BuildFiles);
+        else if (DateTime.Now - _filesBuiltAt > TimeSpan.FromMinutes(10) &&
+                 Interlocked.Exchange(ref _filesBuilding, 1) == 0)
+        {
+            // Обход папок идёт один. Раньше, пока первый не закончился, каждая нажатая
+            // клавиша в командной строке запускала ещё один полный обход диска.
+            _ = Task.Run(() =>
+            {
+                try { BuildFiles(); }
+                catch (Exception ex) { Log.Write("Индекс файлов: " + ex.Message); }
+                finally { Volatile.Write(ref _filesBuilding, 0); }
+            });
+        }
     }
 
     private void BuildAll()
@@ -36,7 +47,9 @@ internal sealed class AppIndex
         try { BuildApps(); } catch (Exception ex) { Log.Write("Индекс программ: " + ex.Message); }
         try { BuildRecent(); } catch (Exception ex) { Log.Write("Недавние файлы: " + ex.Message); }
         Ready = true;
+        Interlocked.Exchange(ref _filesBuilding, 1);
         try { BuildFiles(); } catch (Exception ex) { Log.Write("Индекс файлов: " + ex.Message); }
+        finally { Volatile.Write(ref _filesBuilding, 0); }
         _ = Task.Run(LoadStoreApps);
     }
 
@@ -79,15 +92,19 @@ internal sealed class AppIndex
 
             lock (_gate)
             {
-                var known = new HashSet<string>(_apps.Select(a => a.Name), StringComparer.OrdinalIgnoreCase);
+                // Список подменяется целиком, а не дополняется: поиск читает его без блокировки,
+                // и Add посреди перебора ронял поиск («коллекция изменилась»).
+                var next = new List<IndexEntry>(_apps);
+                var known = new HashSet<string>(next.Select(a => a.Name), StringComparer.OrdinalIgnoreCase);
                 foreach (var it in items)
                 {
-                    var name = it.GetProperty("Name").GetString() ?? "";
-                    var id = it.GetProperty("AppID").GetString() ?? "";
+                    var name = it.TryGetProperty("Name", out var n) ? n.GetString() ?? "" : "";
+                    var id = it.TryGetProperty("AppID", out var a) ? a.GetString() ?? "" : "";
                     // Классические программы уже есть по ярлыкам; берём только то, что с «!» (пакеты Магазина).
                     if (name.Length == 0 || id.Length == 0 || !id.Contains('!') || known.Contains(name)) continue;
-                    _apps.Add(new IndexEntry(name, "", EntryKind.App, id));
+                    next.Add(new IndexEntry(name, "", EntryKind.App, id));
                 }
+                _apps = next;
             }
         }
         catch (Exception ex) { Log.Write("Приложения Магазина не получены: " + ex.Message); }
